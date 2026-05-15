@@ -1,7 +1,7 @@
 'use client'
 import React, { useState, useCallback, useEffect } from 'react'
 import {
-  Box, Typography, Button, Stack, Tooltip, IconButton, Paper,
+  Box, Typography, Button, Tooltip, IconButton, Paper,
   TextField, Alert, CircularProgress, Chip, Divider,
 } from '@mui/material'
 import { useDropzone } from 'react-dropzone'
@@ -24,20 +24,14 @@ import RedoIcon from '@mui/icons-material/Redo'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import StrikethroughSIcon from '@mui/icons-material/StrikethroughS'
 import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule'
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 
-// ── Toolbar ────────────────────────────────────────────────────────────────────
-function ToolbarButton({
-  active,
-  disabled,
-  tooltip,
-  onClick,
-  children,
+// ── Toolbar button ─────────────────────────────────────────────────────────────
+function ToolbarBtn({
+  active, disabled, tooltip, onClick, children,
 }: {
-  active?: boolean
-  disabled?: boolean
-  tooltip: string
-  onClick: () => void
-  children: React.ReactNode
+  active?: boolean; disabled?: boolean; tooltip: string
+  onClick: () => void; children: React.ReactNode
 }) {
   return (
     <Tooltip title={tooltip} arrow>
@@ -64,106 +58,52 @@ function ToolbarButton({
 
 function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
   if (!editor) return null
-
+  const s = { fontSize: 17 }
   return (
     <Paper
       elevation={0}
       sx={{
         border: '1px solid #E4EAF2',
         borderRadius: '12px 12px 0 0',
-        px: 1.5,
-        py: 1,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 0.25,
-        flexWrap: 'wrap',
+        px: 1.5, py: 1,
+        display: 'flex', alignItems: 'center', gap: 0.25, flexWrap: 'wrap',
         bgcolor: '#FAFCFF',
       }}
     >
-      {/* Desfazer/Refazer */}
-      <ToolbarButton tooltip="Desfazer" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()}>
-        <UndoIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Refazer" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
-        <RedoIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-
+      <ToolbarBtn tooltip="Desfazer" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}><UndoIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Refazer" disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}><RedoIcon sx={s} /></ToolbarBtn>
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-
-      {/* Headings */}
-      {([1, 2, 3] as const).map((level) => (
-        <ToolbarButton
-          key={level}
-          tooltip={`Título ${level}`}
-          active={editor.isActive('heading', { level })}
-          onClick={() => editor.chain().focus().toggleHeading({ level }).run()}
-        >
-          <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, lineHeight: 1 }}>
-            H{level}
-          </Typography>
-        </ToolbarButton>
+      {([1, 2, 3] as const).map((lv) => (
+        <ToolbarBtn key={lv} tooltip={`Título ${lv}`} active={editor.isActive('heading', { level: lv })} onClick={() => editor.chain().focus().toggleHeading({ level: lv }).run()}>
+          <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, lineHeight: 1 }}>H{lv}</Typography>
+        </ToolbarBtn>
       ))}
-      <ToolbarButton
-        tooltip="Parágrafo"
-        active={editor.isActive('paragraph')}
-        onClick={() => editor.chain().focus().setParagraph().run()}
-      >
+      <ToolbarBtn tooltip="Parágrafo" active={editor.isActive('paragraph')} onClick={() => editor.chain().focus().setParagraph().run()}>
         <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11 }}>P</Typography>
-      </ToolbarButton>
-
+      </ToolbarBtn>
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-
-      {/* Inline formatting */}
-      <ToolbarButton tooltip="Negrito" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>
-        <FormatBoldIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Itálico" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>
-        <FormatItalicIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Sublinhado" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>
-        <FormatUnderlinedIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Tachado" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}>
-        <StrikethroughSIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-
+      <ToolbarBtn tooltip="Negrito" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><FormatBoldIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Itálico" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><FormatItalicIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Sublinhado" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><FormatUnderlinedIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Tachado" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}><StrikethroughSIcon sx={s} /></ToolbarBtn>
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-
-      {/* Lists */}
-      <ToolbarButton tooltip="Lista com marcadores" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>
-        <FormatListBulletedIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Lista numerada" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
-        <FormatListNumberedIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-
+      <ToolbarBtn tooltip="Lista com marcadores" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><FormatListBulletedIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Lista numerada" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><FormatListNumberedIcon sx={s} /></ToolbarBtn>
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-
-      {/* Alignment */}
-      <ToolbarButton tooltip="Alinhar à esquerda" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}>
-        <FormatAlignLeftIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Centralizar" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}>
-        <FormatAlignCenterIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-      <ToolbarButton tooltip="Alinhar à direita" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}>
-        <FormatAlignRightIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
-
+      <ToolbarBtn tooltip="Esquerda" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}><FormatAlignLeftIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Centralizar" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}><FormatAlignCenterIcon sx={s} /></ToolbarBtn>
+      <ToolbarBtn tooltip="Direita" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}><FormatAlignRightIcon sx={s} /></ToolbarBtn>
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-
-      {/* Block */}
-      <ToolbarButton tooltip="Linha horizontal" onClick={() => editor.chain().focus().setHorizontalRule().run()}>
-        <HorizontalRuleIcon sx={{ fontSize: 17 }} />
-      </ToolbarButton>
+      <ToolbarBtn tooltip="Linha horizontal" onClick={() => editor.chain().focus().setHorizontalRule().run()}><HorizontalRuleIcon sx={s} /></ToolbarBtn>
     </Paper>
   )
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ── Main ───────────────────────────────────────────────────────────────────────
 export default function EditSection() {
   const [step, setStep] = useState<'upload' | 'editing'>('upload')
   const [docTitle, setDocTitle] = useState('')
+  const [pages, setPages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
   const [error, setError] = useState('')
@@ -175,49 +115,30 @@ export default function EditSection() {
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
     ],
     content: '',
-    editorProps: {
-      attributes: {
-        class: 'tiptap-doc',
-      },
-    },
+    editorProps: { attributes: { class: 'tiptap-doc' } },
   })
 
-  // Inject document styles once
   useEffect(() => {
     const style = document.createElement('style')
     style.textContent = `
-      .tiptap-doc {
-        outline: none;
-        min-height: 600px;
-        font-family: "Inter", "Roboto", Arial, sans-serif;
-        font-size: 1rem;
-        line-height: 1.8;
-        color: #1A1A2E;
-      }
-      .tiptap-doc h1 { font-size: 2em; font-weight: 700; margin: 0.6em 0 0.3em; color: #0D47A1; }
-      .tiptap-doc h2 { font-size: 1.5em; font-weight: 700; margin: 0.5em 0 0.25em; color: #1A1A2E; }
-      .tiptap-doc h3 { font-size: 1.2em; font-weight: 600; margin: 0.5em 0 0.2em; color: #1A1A2E; }
-      .tiptap-doc p { margin: 0.4em 0; }
-      .tiptap-doc strong { font-weight: 700; }
-      .tiptap-doc em { font-style: italic; }
-      .tiptap-doc u { text-decoration: underline; }
-      .tiptap-doc s { text-decoration: line-through; }
-      .tiptap-doc ul { padding-left: 1.8em; margin: 0.4em 0; list-style: disc; }
-      .tiptap-doc ol { padding-left: 1.8em; margin: 0.4em 0; list-style: decimal; }
-      .tiptap-doc li { margin: 0.2em 0; }
-      .tiptap-doc blockquote { border-left: 4px solid #1565C0; padding-left: 1em; margin: 0.8em 0; color: #444; font-style: italic; }
-      .tiptap-doc pre { background: #F4F6FA; border-radius: 6px; padding: 0.8em 1.2em; font-family: monospace; font-size: 0.9em; overflow-x: auto; }
-      .tiptap-doc hr { border: none; border-top: 2px solid #E4EAF2; margin: 1.2em 0; }
-      .tiptap-doc table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
-      .tiptap-doc td, .tiptap-doc th { border: 1px solid #C5D5EA; padding: 6px 10px; }
-      .tiptap-doc th { background: #EBF2FF; font-weight: 700; }
-      .tiptap-doc p.is-editor-empty:first-child::before {
-        content: attr(data-placeholder);
-        color: #9AA3AE;
-        pointer-events: none;
-        float: left;
-        height: 0;
-      }
+      .tiptap-doc { outline:none; min-height:600px; font-family:"Inter","Roboto",Arial,sans-serif; font-size:1rem; line-height:1.8; color:#1A1A2E; }
+      .tiptap-doc h1 { font-size:2em; font-weight:700; margin:.6em 0 .3em; color:#0D47A1; }
+      .tiptap-doc h2 { font-size:1.5em; font-weight:700; margin:.5em 0 .25em; color:#1A1A2E; }
+      .tiptap-doc h3 { font-size:1.2em; font-weight:600; margin:.5em 0 .2em; color:#1A1A2E; }
+      .tiptap-doc p  { margin:.4em 0; }
+      .tiptap-doc strong { font-weight:700; }
+      .tiptap-doc em { font-style:italic; }
+      .tiptap-doc u  { text-decoration:underline; }
+      .tiptap-doc s  { text-decoration:line-through; }
+      .tiptap-doc ul { padding-left:1.8em; margin:.4em 0; list-style:disc; }
+      .tiptap-doc ol { padding-left:1.8em; margin:.4em 0; list-style:decimal; }
+      .tiptap-doc li { margin:.2em 0; }
+      .tiptap-doc blockquote { border-left:4px solid #1565C0; padding-left:1em; margin:.8em 0; color:#444; font-style:italic; }
+      .tiptap-doc pre { background:#F4F6FA; border-radius:6px; padding:.8em 1.2em; font-family:monospace; font-size:.9em; overflow-x:auto; }
+      .tiptap-doc hr  { border:none; border-top:2px solid #E4EAF2; margin:1.2em 0; }
+      .tiptap-doc table { border-collapse:collapse; width:100%; margin:.8em 0; }
+      .tiptap-doc td,.tiptap-doc th { border:1px solid #C5D5EA; padding:6px 10px; }
+      .tiptap-doc th { background:#EBF2FF; font-weight:700; }
     `
     document.head.appendChild(style)
     return () => { document.head.removeChild(style) }
@@ -233,14 +154,15 @@ export default function EditSection() {
       const formData = new FormData()
       formData.append('file', file)
 
-      const res = await fetch('/api/parse-docx', { method: 'POST', body: formData })
+      const res = await fetch('/api/parse-pdf', { method: 'POST', body: formData })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        throw new Error(body.error ?? 'Falha ao processar arquivo')
+        throw new Error(body.error ?? 'Falha ao processar o PDF')
       }
 
-      const { html, title } = await res.json() as { html: string; title: string }
+      const { html, title, pages: numPages } = await res.json() as { html: string; title: string; pages: number }
       setDocTitle(title)
+      setPages(numPages)
       editor?.commands.setContent(html)
       setStep('editing')
     } catch (e: unknown) {
@@ -252,10 +174,7 @@ export default function EditSection() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-      'application/msword': ['.doc'],
-    },
+    accept: { 'application/pdf': ['.pdf'] },
     multiple: false,
     disabled: isLoading,
   })
@@ -265,11 +184,10 @@ export default function EditSection() {
     setIsDownloading(true)
     setError('')
     try {
-      const html = editor.getHTML()
       const res = await fetch('/api/html-to-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html, title: docTitle }),
+        body: JSON.stringify({ html: editor.getHTML(), title: docTitle }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -289,7 +207,7 @@ export default function EditSection() {
     }
   }
 
-  // ── Upload step ──────────────────────────────────────────────────────────────
+  // ── Upload ─────────────────────────────────────────────────────────────────
   if (step === 'upload') {
     return (
       <Box>
@@ -303,7 +221,7 @@ export default function EditSection() {
             textAlign: 'center',
             cursor: isLoading ? 'wait' : 'pointer',
             bgcolor: isDragActive ? 'rgba(21,101,192,0.05)' : '#FAFCFF',
-            transition: 'all 0.2s ease',
+            transition: 'all 0.2s',
             '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(21,101,192,0.04)' },
           }}
         >
@@ -311,51 +229,47 @@ export default function EditSection() {
           <Box
             sx={{
               width: 72, height: 72, borderRadius: '50%',
-              bgcolor: isDragActive ? 'primary.main' : 'primary.light',
+              bgcolor: isDragActive ? 'secondary.main' : 'primary.main',
               mx: 'auto', mb: 2,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              opacity: isLoading ? 0.6 : isDragActive ? 1 : 0.85,
+              opacity: isLoading ? 0.6 : 1,
             }}
           >
             {isLoading
               ? <CircularProgress size={32} sx={{ color: '#fff' }} />
-              : <UploadFileIcon sx={{ color: '#fff', fontSize: 36 }} />
+              : <PictureAsPdfIcon sx={{ color: '#fff', fontSize: 36 }} />
             }
           </Box>
           <Typography variant="h6" fontWeight={700} mb={0.5}>
-            {isLoading ? 'Lendo o documento…' : isDragActive ? 'Solte o arquivo aqui' : 'Faça upload do DOCX para editar'}
+            {isLoading ? 'Lendo o PDF…' : isDragActive ? 'Solte o PDF aqui' : 'Faça upload do PDF para editar'}
           </Typography>
           <Typography variant="body2" color="text.secondary" mb={2}>
-            {isLoading ? 'Aguarde, extraindo o conteúdo…' : 'Arraste e solte ou clique para selecionar'}
+            {isLoading ? 'Extraindo o conteúdo de texto…' : 'Arraste e solte ou clique para selecionar'}
           </Typography>
-          <Stack direction="row" spacing={1} justifyContent="center">
-            <Chip label=".DOCX" size="small" sx={{ bgcolor: 'rgba(21,101,192,0.1)', color: 'primary.dark', fontWeight: 700 }} />
-            <Chip label=".DOC" size="small" sx={{ bgcolor: 'rgba(21,101,192,0.06)', color: 'primary.dark', fontWeight: 700 }} />
-          </Stack>
+          <Chip label=".PDF" size="small" sx={{ bgcolor: 'rgba(230,81,0,0.1)', color: 'secondary.dark', fontWeight: 700 }} />
         </Box>
 
-        <Box mt={3} p={2.5} sx={{ bgcolor: '#F0F7FF', borderRadius: 3, border: '1px solid #C5D5EA' }}>
-          <Typography variant="body2" color="primary.dark" fontWeight={600} mb={0.5}>
-            Como funciona:
+        <Box mt={3} p={2.5} sx={{ bgcolor: '#FFF8F0', borderRadius: 3, border: '1px solid #FFD0A0' }}>
+          <Typography variant="body2" color="secondary.dark" fontWeight={600} mb={0.75}>
+            ⚠️ Observação importante
           </Typography>
-          <Stack spacing={0.5}>
-            {[
-              '1. Faça upload de um arquivo DOCX',
-              '2. O conteúdo abre num editor de texto rico',
-              '3. Edite títulos, parágrafos, listas e formatação',
-              '4. Clique em "Baixar como PDF" para exportar',
-            ].map((s) => (
-              <Typography key={s} variant="body2" color="text.secondary">{s}</Typography>
-            ))}
-          </Stack>
+          <Typography variant="body2" color="text.secondary" lineHeight={1.7}>
+            Esta ferramenta extrai o <strong>texto</strong> do PDF e abre no editor. Funciona bem
+            para PDFs com texto selecionável (contratos, relatórios, propostas).
+            PDFs compostos por imagens ou escaneados não têm texto extraível.
+          </Typography>
         </Box>
 
-        {error && <Alert severity="error" sx={{ mt: 2, borderRadius: 2 }} onClose={() => setError('')}>{error}</Alert>}
+        {error && (
+          <Alert severity="error" sx={{ mt: 2, borderRadius: 2 }} onClose={() => setError('')}>
+            {error}
+          </Alert>
+        )}
       </Box>
     )
   }
 
-  // ── Editing step ─────────────────────────────────────────────────────────────
+  // ── Editor ─────────────────────────────────────────────────────────────────
   return (
     <Box>
       {/* Action bar */}
@@ -364,13 +278,8 @@ export default function EditSection() {
         sx={{
           border: '1px solid #E4EAF2',
           borderRadius: 3,
-          px: 2,
-          py: 1.5,
-          mb: 2,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 2,
-          flexWrap: 'wrap',
+          px: 2, py: 1.5, mb: 2,
+          display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
         }}
       >
         <CloudUploadIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
@@ -383,6 +292,13 @@ export default function EditSection() {
           inputProps={{ style: { fontWeight: 700, fontSize: '1rem' } }}
           sx={{ flex: 1, minWidth: 160 }}
         />
+        {pages > 0 && (
+          <Chip
+            label={`${pages} página${pages !== 1 ? 's' : ''}`}
+            size="small"
+            sx={{ bgcolor: 'rgba(21,101,192,0.1)', color: 'primary.dark', fontWeight: 600 }}
+          />
+        )}
         <Box flex={1} />
         <Button
           variant="outlined"
@@ -390,7 +306,7 @@ export default function EditSection() {
           startIcon={<UploadFileIcon />}
           onClick={() => { setStep('upload'); editor?.commands.clearContent() }}
         >
-          Trocar arquivo
+          Trocar PDF
         </Button>
         <Button
           variant="contained"
@@ -403,23 +319,15 @@ export default function EditSection() {
         </Button>
       </Paper>
 
-      {error && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>{error}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
+          {error}
+        </Alert>
+      )}
 
-      {/* Editor */}
-      <Box
-        sx={{
-          bgcolor: '#E8ECF2',
-          borderRadius: 3,
-          p: { xs: 2, md: 4 },
-          minHeight: 700,
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: 820,
-            mx: 'auto',
-          }}
-        >
+      {/* Editor area */}
+      <Box sx={{ bgcolor: '#E8ECF2', borderRadius: 3, p: { xs: 2, md: 4 }, minHeight: 700 }}>
+        <Box sx={{ maxWidth: 820, mx: 'auto' }}>
           <EditorToolbar editor={editor} />
           <Box
             sx={{

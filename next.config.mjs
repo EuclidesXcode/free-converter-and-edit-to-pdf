@@ -3,7 +3,7 @@ const nextConfig = {
   experimental: {
     // Prevent Next.js from bundling these server-side packages so they
     // can load their own asset files (AFM fonts, etc.) at runtime.
-    serverComponentsExternalPackages: ['pdfkit', 'mammoth', 'xlsx', 'cheerio'],
+    serverComponentsExternalPackages: ['pdfkit', 'mammoth', 'xlsx', 'cheerio', 'pdf-parse', 'pdfjs-dist'],
   },
   webpack: (config, { isServer }) => {
     if (!isServer) {
