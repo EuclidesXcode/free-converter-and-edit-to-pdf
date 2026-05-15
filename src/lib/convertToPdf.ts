@@ -2,6 +2,61 @@ import PDFDocument from 'pdfkit'
 import { load as cheerioLoad, type CheerioAPI, type Cheerio } from 'cheerio'
 import type { AnyNode, Element as DomElement } from 'domhandler'
 
+// ── Image dimension parser ────────────────────────────────────────────────────
+// Returns pixel width/height and embedded DPI so we can replicate the original size.
+function parseImageSize(buf: Buffer, mime: string): { w: number; h: number; dpi: number } | null {
+  try {
+    if (mime.includes('png')) {
+      // PNG: signature 8 bytes, then IHDR chunk. Width @ byte 16, Height @ byte 20.
+      if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50) return null
+      const w = buf.readUInt32BE(16)
+      const h = buf.readUInt32BE(20)
+      // Scan for pHYs chunk (pixels per unit) to get DPI
+      let dpi = 96
+      let off = 8
+      while (off + 12 < buf.length) {
+        const cLen = buf.readUInt32BE(off)
+        const cType = buf.subarray(off + 4, off + 8).toString('ascii')
+        if (cType === 'pHYs' && cLen >= 9) {
+          const ppuX = buf.readUInt32BE(off + 8)
+          const unit = buf[off + 16] // 1 = metre
+          if (unit === 1 && ppuX > 0) dpi = Math.round(ppuX / 39.3701)
+        }
+        if (cType === 'IDAT') break
+        off += 12 + cLen
+      }
+      return { w, h, dpi }
+    }
+    if (mime.includes('jpeg') || mime.includes('jpg')) {
+      // JPEG: scan for JFIF/EXIF APP0 (density) and SOF0/1/2 (dimensions).
+      if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null
+      let dpi = 96
+      let w = 0; let h = 0
+      let off = 2
+      while (off + 4 < buf.length) {
+        if (buf[off] !== 0xFF) break
+        const marker = buf[off + 1]
+        const segLen = buf.readUInt16BE(off + 2)
+        // JFIF APP0 – density
+        if (marker === 0xE0 && segLen >= 14) {
+          const unit = buf[off + 11]
+          const xd = buf.readUInt16BE(off + 12)
+          if (unit === 1 && xd > 0) dpi = xd
+          else if (unit === 2 && xd > 0) dpi = Math.round(xd * 2.54)
+        }
+        // SOF markers – width & height
+        if (marker >= 0xC0 && marker <= 0xC3 && segLen >= 9) {
+          h = buf.readUInt16BE(off + 5)
+          w = buf.readUInt16BE(off + 7)
+        }
+        off += 2 + segLen
+      }
+      if (w > 0 && h > 0) return { w, h, dpi }
+    }
+  } catch { /* ignore malformed headers */ }
+  return null
+}
+
 // ── DOCX ──────────────────────────────────────────────────────────────────────
 export async function docxToPdf(buffer: Buffer): Promise<Buffer> {
   const mammoth = await import('mammoth')
@@ -245,15 +300,32 @@ function renderChildren(
         // pdfkit supports JPEG and PNG natively; skip SVG/WebP/GIF
         const match = src.match(/^data:(image\/(?:png|jpeg|jpg));base64,(.+)$/i)
         if (!match) break
-        const maxW = doc.page.width - doc.page.margins.left - doc.page.margins.right
-        const maxH = Math.min(380, doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 80)
-        if (doc.y + 60 > doc.page.height - doc.page.margins.bottom) doc.addPage()
+        const usableW = doc.page.width - doc.page.margins.left - doc.page.margins.right
         try {
           const imgBuf = Buffer.from(match[2], 'base64')
+          const dims = parseImageSize(imgBuf, match[1].toLowerCase())
+
+          // Convert pixel size to PDF points using the image's own DPI metadata.
+          // If metadata is absent, fall back to 96 dpi (Word/screen default).
+          let renderW: number
+          if (dims && dims.w > 0 && dims.h > 0) {
+            const ptW = (dims.w / dims.dpi) * 72
+            // Never exceed the usable page width; keep aspect ratio.
+            renderW = Math.min(ptW, usableW)
+          } else {
+            // No dimension metadata — use at most 60% of page width as a safe default.
+            renderW = usableW * 0.6
+          }
+
+          // Ensure there's at least renderH worth of space; add page if needed.
+          const aspect = dims ? dims.h / dims.w : 0.75
+          const renderH = renderW * aspect
+          if (doc.y + renderH > doc.page.height - doc.page.margins.bottom) doc.addPage()
+
           const yBefore = doc.y
-          doc.image(imgBuf, doc.page.margins.left, doc.y, { fit: [maxW, maxH], align: 'center' })
-          // If pdfkit didn't advance doc.y (behavior varies by version), force it
-          if (doc.y <= yBefore) doc.y = yBefore + maxH
+          doc.image(imgBuf, doc.page.margins.left, doc.y, { width: renderW })
+          // Guard: if pdfkit didn't advance doc.y, do it manually.
+          if (doc.y <= yBefore) doc.y = yBefore + renderH
           doc.moveDown(0.5)
         } catch { /* skip unrenderable image */ }
         break
