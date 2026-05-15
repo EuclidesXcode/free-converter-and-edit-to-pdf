@@ -49,34 +49,36 @@ export async function xlsxToPdf(buffer: Buffer, filename: string): Promise<Buffe
       const startX = doc.page.margins.left
 
       // Header row
-      doc.rect(startX, doc.y, pageWidth, headerH).fill('#1565C0')
+      const headerY = doc.y
+      doc.rect(startX, headerY, pageWidth, headerH).fill('#1565C0')
       headers.slice(0, colCount).forEach((h, i) => {
         doc
           .fillColor('white')
           .fontSize(9)
           .font('Helvetica-Bold')
-          .text(h || '', startX + i * colWidth + 4, doc.y - headerH + 8, {
+          .text(h || '', startX + i * colWidth + 4, headerY + 7, {
             width: colWidth - 8,
             lineBreak: false,
           })
       })
-      doc.y += 2
+      doc.y = headerY + headerH
 
       rows.slice(1).forEach((row, rIdx) => {
         if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) doc.addPage()
         const bg = rIdx % 2 === 0 ? '#F8FAFC' : '#FFFFFF'
-        doc.rect(startX, doc.y, pageWidth, rowH).fill(bg).strokeColor('#E0E6EF').stroke()
+        const rowY = doc.y
+        doc.rect(startX, rowY, pageWidth, rowH).fill(bg).strokeColor('#E0E6EF').stroke()
         row.slice(0, colCount).forEach((cell, i) => {
           doc
             .fillColor('#333')
             .fontSize(8.5)
             .font('Helvetica')
-            .text(String(cell ?? ''), startX + i * colWidth + 4, doc.y - rowH + 7, {
+            .text(String(cell ?? ''), startX + i * colWidth + 4, rowY + 6, {
               width: colWidth - 8,
               lineBreak: false,
             })
         })
-        doc.y += 2
+        doc.y = rowY + rowH
       })
     })
 
@@ -281,22 +283,24 @@ function renderTable(doc: PDFKit.PDFDocument, $: CheerioAPI, $table: Cheerio<Dom
   const rowH = 20
   const startX = doc.page.margins.left
 
-  doc.rect(startX, doc.y, pageWidth, headerH).fill('#1565C0')
+  const tableHeaderY = doc.y
+  doc.rect(startX, tableHeaderY, pageWidth, headerH).fill('#1565C0')
   rows[0].slice(0, colCount).forEach((cell, i) => {
     doc
       .fillColor('white').fontSize(9).font('Helvetica-Bold')
-      .text(cell, startX + i * colWidth + 4, doc.y - headerH + 7, { width: colWidth - 8, lineBreak: false })
+      .text(cell, startX + i * colWidth + 4, tableHeaderY + 7, { width: colWidth - 8, lineBreak: false })
   })
-  doc.y += 2
+  doc.y = tableHeaderY + headerH
 
   rows.slice(1).forEach((row, rIdx) => {
     if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) doc.addPage()
-    doc.rect(startX, doc.y, pageWidth, rowH).fill(rIdx % 2 === 0 ? '#F5F7FA' : '#FFFFFF').strokeColor('#E0E6EF').stroke()
+    const rowY = doc.y
+    doc.rect(startX, rowY, pageWidth, rowH).fill(rIdx % 2 === 0 ? '#F5F7FA' : '#FFFFFF').strokeColor('#E0E6EF').stroke()
     row.slice(0, colCount).forEach((cell, i) => {
       doc
         .fillColor('#333').fontSize(8.5).font('Helvetica')
-        .text(cell, startX + i * colWidth + 4, doc.y - rowH + 6, { width: colWidth - 8, lineBreak: false })
+        .text(cell, startX + i * colWidth + 4, rowY + 6, { width: colWidth - 8, lineBreak: false })
     })
-    doc.y += 2
+    doc.y = rowY + rowH
   })
 }
