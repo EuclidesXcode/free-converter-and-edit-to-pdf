@@ -31,12 +31,9 @@ function installDOMMatrixPolyfill() {
 
     multiply(o: DOMMatrixPolyfill): DOMMatrixPolyfill {
       return new DOMMatrixPolyfill([
-        this.a * o.a + this.c * o.b,
-        this.b * o.a + this.d * o.b,
-        this.a * o.c + this.c * o.d,
-        this.b * o.c + this.d * o.d,
-        this.a * o.e + this.c * o.f + this.e,
-        this.b * o.e + this.d * o.f + this.f,
+        this.a * o.a + this.c * o.b, this.b * o.a + this.d * o.b,
+        this.a * o.c + this.c * o.d, this.b * o.c + this.d * o.d,
+        this.a * o.e + this.c * o.f + this.e, this.b * o.e + this.d * o.f + this.f,
       ])
     }
 
@@ -53,24 +50,17 @@ function installDOMMatrixPolyfill() {
     translate(x = 0, y = 0): DOMMatrixPolyfill {
       return new DOMMatrixPolyfill([
         this.a, this.b, this.c, this.d,
-        this.a * x + this.c * y + this.e,
-        this.b * x + this.d * y + this.f,
+        this.a * x + this.c * y + this.e, this.b * x + this.d * y + this.f,
       ])
     }
 
     scale(sx = 1, sy?: number): DOMMatrixPolyfill {
       const sY = sy ?? sx
-      return new DOMMatrixPolyfill([
-        this.a * sx, this.b * sx, this.c * sY, this.d * sY, this.e, this.f,
-      ])
+      return new DOMMatrixPolyfill([this.a * sx, this.b * sx, this.c * sY, this.d * sY, this.e, this.f])
     }
 
     transformPoint(p: { x: number; y: number }) {
-      return {
-        x: this.a * p.x + this.c * p.y + this.e,
-        y: this.b * p.x + this.d * p.y + this.f,
-        z: 0, w: 1,
-      }
+      return { x: this.a * p.x + this.c * p.y + this.e, y: this.b * p.x + this.d * p.y + this.f, z: 0, w: 1 }
     }
 
     toFloat32Array() { return new Float32Array([this.a, this.b, this.c, this.d, this.e, this.f]) }
@@ -82,11 +72,10 @@ function installDOMMatrixPolyfill() {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TextItem { x: number; y: number; str: string; width: number }
-interface TextLine { y: number; items: TextItem[] }
-interface PageData { lines: TextLine[]; pageW: number }
+interface RawPage { items: TextItem[]; pageW: number; pageH: number }
 
-// ── PDF structured extraction ─────────────────────────────────────────────────
-async function extractPages(buffer: Buffer): Promise<{ pages: PageData[]; numPages: number }> {
+// ── PDF raw item extraction ───────────────────────────────────────────────────
+async function extractPages(buffer: Buffer): Promise<{ pages: RawPage[]; numPages: number }> {
   installDOMMatrixPolyfill()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js') as any
@@ -100,225 +89,241 @@ async function extractPages(buffer: Buffer): Promise<{ pages: PageData[]; numPag
   }).promise
 
   const numPages: number = pdfDoc.numPages
-  const pages: PageData[] = []
+  const pages: RawPage[] = []
 
   for (let p = 1; p <= numPages; p++) {
     const page = await pdfDoc.getPage(p)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const view: number[] = (page as any).view ?? [0, 0, 595, 842]
     const pageW = view[2] - view[0]
+    const pageH = view[3] - view[1]
     const content = await page.getTextContent()
 
-    // Group items into lines by Y-proximity (4pt tolerance)
-    const groups: Array<{ y: number; items: TextItem[] }> = []
+    const items: TextItem[] = []
     for (const raw of content.items) {
       if (!('str' in raw)) continue
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const item = raw as any
-      const str: string = item.str ?? ''
+      const str: string = (item.str ?? '').replace(/\s+/g, ' ')
       if (!str.trim()) continue
-      const y: number = item.transform[5]
-      const x: number = item.transform[4]
-      const width: number = item.width ?? 0
-
-      const existing = groups.find((g) => Math.abs(g.y - y) < 4)
-      if (existing) {
-        existing.items.push({ x, y, str, width })
-      } else {
-        groups.push({ y, items: [{ x, y, str, width }] })
-      }
+      items.push({ x: item.transform[4], y: item.transform[5], str, width: item.width ?? 0 })
     }
 
-    // Sort top → bottom, items left → right within each line
-    const lines: TextLine[] = groups
-      .sort((a, b) => b.y - a.y)
-      .map((g) => ({ y: g.y, items: g.items.sort((a, b) => a.x - b.x) }))
-
-    pages.push({ lines, pageW })
+    pages.push({ items, pageW, pageH })
   }
 
   return { pages, numPages }
 }
 
-// ── Column detection helpers ──────────────────────────────────────────────────
-
-/**
- * Given a set of lines, return the X-start positions of detected columns.
- * Returns [] if no consistent column structure is found (< 3 columns).
- */
-function detectColumnBoundaries(lines: TextLine[]): number[] {
-  if (lines.length < 2) return []
-
-  // Collect all first-item X positions per line (true column starts, rounded to 8pt grid)
-  const xCounts = new Map<number, number>()
-  for (const line of lines) {
-    const seen = new Set<number>()
-    for (const item of line.items) {
-      const rounded = Math.round(item.x / 8) * 8
-      if (!seen.has(rounded)) {
-        xCounts.set(rounded, (xCounts.get(rounded) ?? 0) + 1)
-        seen.add(rounded)
-      }
-    }
-  }
-
-  // Keep X positions that appear in at least 25% of lines
-  const minFreq = Math.max(2, Math.floor(lines.length * 0.25))
-  const frequentX = Array.from(xCounts.entries())
-    .filter(([, count]) => count >= minFreq)
-    .map(([x]) => x)
-    .sort((a, b) => a - b)
-
-  if (frequentX.length < 2) return []
-
-  // Merge X values within 20pt into one boundary (take the smallest in each cluster)
-  const boundaries: number[] = [frequentX[0]]
-  for (let i = 1; i < frequentX.length; i++) {
-    if (frequentX[i] - boundaries[boundaries.length - 1] > 20) {
-      boundaries.push(frequentX[i])
-    }
-  }
-
-  // Require at least 3 column boundaries so simple "Label: Value" lines don't qualify
-  return boundaries.length >= 3 ? boundaries : []
-}
-
-/** Assign a text item to the nearest column index based on its X position. */
-function assignColumn(x: number, boundaries: number[]): number {
-  let col = 0
-  for (let i = 1; i < boundaries.length; i++) {
-    if (x >= boundaries[i] - 10) col = i
-  }
-  return col
-}
-
-/**
- * A line qualifies as "multi-column" if its items span ≥ 35% of the page width
- * AND have at least 2 significant gaps (≥ 18pt) — meaning at least 3 distinct zones.
- */
-function isMultiColumn(line: TextLine, pageW: number): boolean {
-  if (line.items.length < 2) return false
-  const span = line.items[line.items.length - 1].x - line.items[0].x
-  if (span < pageW * 0.35) return false
-  let gapCount = 0
-  for (let i = 1; i < line.items.length; i++) {
-    const gap = line.items[i].x - (line.items[i - 1].x + line.items[i - 1].width)
-    if (gap > 18) gapCount++
-  }
-  return gapCount >= 2
-}
-
-// ── HTML builder ──────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function lineToText(line: TextLine): string {
-  // Join items; add a space when there is a meaningful gap between them
-  let result = ''
-  for (let i = 0; i < line.items.length; i++) {
-    const item = line.items[i]
-    if (i === 0) {
-      result += item.str
-    } else {
-      const prev = line.items[i - 1]
-      const gap = item.x - (prev.x + prev.width)
-      result += (gap > 4 ? ' ' : '') + item.str
-    }
-  }
-  return result.trim()
-}
-
-function classifyLine(text: string): 'h2' | 'h3' | 'p' {
+function classifyText(text: string): 'h2' | 'h3' | 'p' {
   const isAllCaps =
-    text === text.toUpperCase() &&
-    text.length > 3 && text.length < 120 &&
+    text === text.toUpperCase() && text.length > 3 && text.length < 120 &&
     /[A-ZÀÁÂÃÉÊÍÓÔÕÚ]/.test(text)
   const isShortTitle =
-    text.length < 80 &&
-    !text.endsWith('.') && !text.endsWith(',') && !text.endsWith(';') &&
-    !/^\d/.test(text)
-
+    text.length < 80 && !text.endsWith('.') && !text.endsWith(',') &&
+    !text.endsWith(';') && !/^\d/.test(text)
   if (isAllCaps) return 'h2'
   if (isShortTitle) return 'h3'
   return 'p'
 }
 
-function buildHtml(pages: PageData[]): string {
-  const html: string[] = []
-  const MIN_TABLE_RUN = 4  // require this many consecutive multi-col lines
+// ── Column-first table detection ──────────────────────────────────────────────
 
-  for (const { lines, pageW } of pages) {
-    if (!lines.length) continue
-
-    // ── Mark each line as multi-column using real page width ──────────────
-    const isTableCandidate: boolean[] = lines.map((l) => isMultiColumn(l, pageW))
-
-    // ── Find true consecutive runs of ≥ MIN_TABLE_RUN and mark them ───────
-    const inTable: boolean[] = new Array(lines.length).fill(false)
-    let runStart = -1
-    for (let i = 0; i <= lines.length; i++) {
-      const val = i < lines.length && isTableCandidate[i]
-      if (val) {
-        if (runStart === -1) runStart = i
-      } else {
-        if (runStart !== -1) {
-          if (i - runStart >= MIN_TABLE_RUN) {
-            for (let k = runStart; k < i; k++) inTable[k] = true
-          }
-          runStart = -1
-        }
-      }
-    }
-
-    let i = 0
-    while (i < lines.length) {
-      if (inTable[i]) {
-        // ── Collect the full consecutive table run ──────────────────────
-        const tableLines: TextLine[] = []
-        while (i < lines.length && inTable[i]) {
-          tableLines.push(lines[i])
-          i++
-        }
-
-        const cols = detectColumnBoundaries(tableLines)
-        if (cols.length >= 3) {
-          html.push('<table>')
-          for (const tl of tableLines) {
-            const cells: string[] = new Array(cols.length).fill('')
-            for (const item of tl.items) {
-              const col = assignColumn(item.x, cols)
-              cells[col] += (cells[col] ? ' ' : '') + item.str
-            }
-            const isHeader =
-              tableLines.indexOf(tl) === 0 ||
-              cells.filter((c) => c.trim()).every((c) => c.trim() === c.trim().toUpperCase())
-            const td = isHeader ? 'th' : 'td'
-            html.push('<tr>' + cells.map((c) => `<${td}>${esc(c.trim())}</${td}>`).join('') + '</tr>')
-          }
-          html.push('</table>')
-        } else {
-          // Column detection insufficient — render as spaced text
-          for (const tl of tableLines) {
-            const text = lineToText(tl)
-            if (text) html.push(`<p>${esc(text)}</p>`)
-          }
-        }
-      } else {
-        // ── Single text line ────────────────────────────────────────────
-        const text = lineToText(lines[i])
-        if (text) {
-          const tag = classifyLine(text)
-          html.push(`<${tag}>${esc(text)}</${tag}>`)
-        }
-        i++
-      }
-    }
-
-    html.push('<hr>')
+/**
+ * Find X positions that act as column starts.
+ * Uses frequency clustering on all items in the page.
+ * Requires ≥ 3 columns spanning ≥ 40% of page width.
+ */
+function findColumns(items: TextItem[], pageW: number): number[] {
+  // Count how many items start (or nearly start) at each X rounded to 8pt grid
+  const freq = new Map<number, number>()
+  for (const item of items) {
+    const x = Math.round(item.x / 8) * 8
+    freq.set(x, (freq.get(x) ?? 0) + 1)
   }
 
-  if (html[html.length - 1] === '<hr>') html.pop()
+  // Keep only X positions that appear at least max(3, 6% of items) times
+  const minF = Math.max(3, Math.floor(items.length * 0.06))
+  const candidates = Array.from(freq.entries())
+    .filter(([, c]) => c >= minF)
+    .map(([x]) => x)
+    .sort((a, b) => a - b)
+
+  if (candidates.length < 3) return []
+
+  // Merge X values within 22pt into one column boundary
+  const cols: number[] = [candidates[0]]
+  for (let i = 1; i < candidates.length; i++) {
+    if (candidates[i] - cols[cols.length - 1] > 22) cols.push(candidates[i])
+  }
+
+  // Must span at least 40% of page width and have ≥ 3 columns
+  if (cols.length < 3) return []
+  if (cols[cols.length - 1] - cols[0] < pageW * 0.4) return []
+
+  return cols
+}
+
+/** Assign X to nearest column index. */
+function colFor(x: number, cols: number[]): number {
+  let best = 0
+  for (let i = 1; i < cols.length; i++) {
+    if (x >= cols[i] - 10) best = i
+  }
+  return best
+}
+
+/**
+ * Given items assigned to each column, find Y row anchors using the column
+ * whose items have the most regular Y spacing.
+ */
+function findRowAnchors(byCol: Map<number, TextItem[]>): number[] {
+  let bestAnchors: number[] = []
+  let bestScore = 0
+
+  for (const colItems of Array.from(byCol.values())) {
+    if (colItems.length < 2) continue
+    const ys = colItems.map(i => i.y).sort((a, b) => b - a) // top→bottom
+
+    const diffs = ys.slice(1).map((y, i) => ys[i] - y)
+    const avg = diffs.reduce((s, d) => s + d, 0) / diffs.length
+    if (avg <= 0) continue
+    const stddev = Math.sqrt(diffs.reduce((s, d) => s + (d - avg) ** 2, 0) / diffs.length)
+    const score = colItems.length / (1 + stddev / avg)
+
+    if (score > bestScore) {
+      bestScore = score
+      bestAnchors = ys
+    }
+  }
+
+  return bestAnchors
+}
+
+// ── Page → HTML ───────────────────────────────────────────────────────────────
+
+function pageToHtml(items: TextItem[], pageW: number): string {
+  if (!items.length) return ''
+
+  const cols = findColumns(items, pageW)
+
+  if (cols.length >= 3) {
+    // ── Column-first table extraction ─────────────────────────────────────
+    const byCol = new Map<number, TextItem[]>()
+    for (let c = 0; c < cols.length; c++) byCol.set(c, [])
+
+    const tableItems: TextItem[] = []
+    const textItems: TextItem[] = []
+
+    for (const item of items) {
+      const c = colFor(item.x, cols)
+      // Accept item into table if its X is within 30pt of its column's expected start
+      const colX = cols[c]
+      const nextColX = c + 1 < cols.length ? cols[c + 1] : colX + pageW
+      if (item.x >= colX - 12 && item.x < nextColX) {
+        byCol.get(c)!.push(item)
+        tableItems.push(item)
+      } else {
+        textItems.push(item)
+      }
+    }
+
+    const anchors = findRowAnchors(byCol)
+    const html: string[] = []
+
+    // Render non-table text that sits ABOVE the table (header info)
+    const tableTopY = tableItems.length ? Math.max(...tableItems.map(i => i.y)) : Infinity
+    const headerItems = textItems.filter(i => i.y >= tableTopY - 20)
+    const footerItems = textItems.filter(i => i.y < tableTopY - 20)
+
+    if (headerItems.length) html.push(groupToText(headerItems))
+
+    if (anchors.length >= 2) {
+      // Calculate row pitch for tolerance
+      const diffs = anchors.slice(1).map((y, i) => anchors[i] - y)
+      const pitch = diffs.reduce((s, d) => s + d, 0) / diffs.length
+      const tol = Math.max(pitch * 0.65, 6)
+
+      // Build table rows: each anchor Y → one row
+      const rowData: Array<{ anchorY: number; cells: Map<number, string[]> }> =
+        anchors.map(ay => ({ anchorY: ay, cells: new Map() }))
+
+      for (const item of tableItems) {
+        let bestIdx = 0
+        let bestDist = Math.abs(item.y - anchors[0])
+        for (let k = 1; k < anchors.length; k++) {
+          const d = Math.abs(item.y - anchors[k])
+          if (d < bestDist) { bestDist = d; bestIdx = k }
+        }
+        if (bestDist > tol) continue  // too far from any anchor → skip
+        const c = colFor(item.x, cols)
+        const rd = rowData[bestIdx]
+        if (!rd.cells.has(c)) rd.cells.set(c, [])
+        rd.cells.get(c)!.push(item.str)
+      }
+
+      html.push('<table>')
+      let firstRow = true
+      for (const rd of rowData) {
+        const cells: string[] = Array.from({ length: cols.length }, (_, c) =>
+          (rd.cells.get(c) ?? []).join(' ').trim()
+        )
+        if (cells.every(c => !c)) continue
+
+        const isHeader = firstRow &&
+          cells.filter(c => c).some(c => c.toUpperCase() === c && /[A-Z]/.test(c))
+        const td = isHeader ? 'th' : 'td'
+        html.push('<tr>' + cells.map(c => `<${td}>${esc(c)}</${td}>`).join('') + '</tr>')
+        firstRow = false
+      }
+      html.push('</table>')
+    } else {
+      // Not enough row anchors → fall through to text rendering
+      return groupToText(items)
+    }
+
+    if (footerItems.length) html.push(groupToText(footerItems))
+
+    return html.join('\n')
+  }
+
+  // ── Fallback: Y-grouping → text/heading paragraphs ────────────────────────
+  return groupToText(items)
+}
+
+/** Y-group items into lines and convert to heading/paragraph HTML. */
+function groupToText(items: TextItem[]): string {
+  const groups: Array<{ y: number; items: TextItem[] }> = []
+  for (const item of items) {
+    const g = groups.find(g => Math.abs(g.y - item.y) < 4)
+    if (g) g.items.push(item)
+    else groups.push({ y: item.y, items: [item] })
+  }
+
+  const lines = groups
+    .sort((a, b) => b.y - a.y)
+    .map(g => g.items.sort((a, b) => a.x - b.x))
+
+  const html: string[] = []
+  for (const lineItems of lines) {
+    // Join items with space proportional to gap
+    let text = ''
+    for (let i = 0; i < lineItems.length; i++) {
+      const item = lineItems[i]
+      if (i === 0) { text += item.str; continue }
+      const gap = item.x - (lineItems[i - 1].x + lineItems[i - 1].width)
+      text += (gap > 4 ? ' ' : '') + item.str
+    }
+    text = text.trim()
+    if (!text) continue
+    const tag = classifyText(text)
+    html.push(`<${tag}>${esc(text)}</${tag}>`)
+  }
   return html.join('\n')
 }
 
@@ -337,15 +342,20 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer())
     const { pages, numPages } = await extractPages(buffer)
 
-    const totalLines = pages.reduce((s, p) => s + p.lines.length, 0)
-    if (totalLines === 0) {
+    if (!pages.some(p => p.items.length)) {
       return NextResponse.json(
         { error: 'Este PDF não contém texto extraível (pode ser um PDF de imagem/escaneado).' },
         { status: 422 }
       )
     }
 
-    const html = buildHtml(pages)
+    const htmlParts: string[] = []
+    for (const { items, pageW } of pages) {
+      const part = pageToHtml(items, pageW)
+      if (part) htmlParts.push(part)
+    }
+
+    const html = htmlParts.join('\n<hr>\n')
     const title = file.name.replace(/\.pdf$/i, '')
 
     return NextResponse.json({ html, title, pages: numPages })

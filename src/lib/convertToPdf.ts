@@ -44,41 +44,45 @@ export async function xlsxToPdf(buffer: Buffer, filename: string): Promise<Buffe
       const headers = rows[0].map(String)
       const colCount = Math.min(headers.length, 10)
       const colWidth = pageWidth / colCount
-      const headerH = 26
-      const rowH = 22
       const startX = doc.page.margins.left
+      const PH = 4
+      const PV = 5
+      const MIN_ROW_H = 18
+
+      function calcH(cells: string[], sz: number, font: string): number {
+        doc.font(font).fontSize(sz)
+        const heights = cells.slice(0, colCount).map(c =>
+          c ? doc.heightOfString(String(c), { width: colWidth - PH * 2 }) : 0
+        )
+        return Math.max(MIN_ROW_H, Math.max(...heights) + PV * 2)
+      }
 
       // Header row
+      const headerH = calcH(headers, 9, 'Helvetica-Bold')
+      if (doc.y + headerH > doc.page.height - doc.page.margins.bottom) doc.addPage()
       const headerY = doc.y
       doc.rect(startX, headerY, pageWidth, headerH).fill('#1565C0')
       headers.slice(0, colCount).forEach((h, i) => {
-        doc
-          .fillColor('white')
-          .fontSize(9)
-          .font('Helvetica-Bold')
-          .text(h || '', startX + i * colWidth + 4, headerY + 7, {
-            width: colWidth - 8,
-            lineBreak: false,
+        doc.fillColor('white').fontSize(9).font('Helvetica-Bold')
+          .text(h || '', startX + i * colWidth + PH, headerY + PV, {
+            width: colWidth - PH * 2, lineBreak: true, height: headerH - PV * 2,
           })
       })
       doc.y = headerY + headerH
 
       rows.slice(1).forEach((row, rIdx) => {
-        if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) doc.addPage()
+        const rh = calcH(row.map(String), 8.5, 'Helvetica')
+        if (doc.y + rh > doc.page.height - doc.page.margins.bottom) doc.addPage()
         const bg = rIdx % 2 === 0 ? '#F8FAFC' : '#FFFFFF'
         const rowY = doc.y
-        doc.rect(startX, rowY, pageWidth, rowH).fill(bg).strokeColor('#E0E6EF').stroke()
+        doc.rect(startX, rowY, pageWidth, rh).fill(bg).strokeColor('#E0E6EF').stroke()
         row.slice(0, colCount).forEach((cell, i) => {
-          doc
-            .fillColor('#333')
-            .fontSize(8.5)
-            .font('Helvetica')
-            .text(String(cell ?? ''), startX + i * colWidth + 4, rowY + 6, {
-              width: colWidth - 8,
-              lineBreak: false,
+          doc.fillColor('#333').fontSize(8.5).font('Helvetica')
+            .text(String(cell ?? ''), startX + i * colWidth + PH, rowY + PV, {
+              width: colWidth - PH * 2, lineBreak: true, height: rh - PV * 2,
             })
         })
-        doc.y = rowY + rowH
+        doc.y = rowY + rh
       })
     })
 
@@ -279,28 +283,44 @@ function renderTable(doc: PDFKit.PDFDocument, $: CheerioAPI, $table: Cheerio<Dom
   const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right
   const colCount = Math.min(rows[0].length, 8)
   const colWidth = pageWidth / colCount
-  const headerH = 24
-  const rowH = 20
   const startX = doc.page.margins.left
+  const PH = 4
+  const PV = 5
+  const MIN_ROW_H = 18
 
+  function calcH(cells: string[], sz: number, font: string): number {
+    doc.font(font).fontSize(sz)
+    const heights = cells.slice(0, colCount).map(c =>
+      c ? doc.heightOfString(c, { width: colWidth - PH * 2 }) : 0
+    )
+    return Math.max(MIN_ROW_H, Math.max(...heights) + PV * 2)
+  }
+
+  // Header row
+  const headerH = calcH(rows[0], 9, 'Helvetica-Bold')
+  if (doc.y + headerH > doc.page.height - doc.page.margins.bottom) doc.addPage()
   const tableHeaderY = doc.y
   doc.rect(startX, tableHeaderY, pageWidth, headerH).fill('#1565C0')
   rows[0].slice(0, colCount).forEach((cell, i) => {
-    doc
-      .fillColor('white').fontSize(9).font('Helvetica-Bold')
-      .text(cell, startX + i * colWidth + 4, tableHeaderY + 7, { width: colWidth - 8, lineBreak: false })
+    doc.fillColor('white').fontSize(9).font('Helvetica-Bold')
+      .text(cell, startX + i * colWidth + PH, tableHeaderY + PV, {
+        width: colWidth - PH * 2, lineBreak: true, height: headerH - PV * 2,
+      })
   })
   doc.y = tableHeaderY + headerH
 
   rows.slice(1).forEach((row, rIdx) => {
-    if (doc.y + rowH > doc.page.height - doc.page.margins.bottom) doc.addPage()
+    const rh = calcH(row, 8.5, 'Helvetica')
+    if (doc.y + rh > doc.page.height - doc.page.margins.bottom) doc.addPage()
     const rowY = doc.y
-    doc.rect(startX, rowY, pageWidth, rowH).fill(rIdx % 2 === 0 ? '#F5F7FA' : '#FFFFFF').strokeColor('#E0E6EF').stroke()
+    doc.rect(startX, rowY, pageWidth, rh)
+      .fill(rIdx % 2 === 0 ? '#F5F7FA' : '#FFFFFF').strokeColor('#E0E6EF').stroke()
     row.slice(0, colCount).forEach((cell, i) => {
-      doc
-        .fillColor('#333').fontSize(8.5).font('Helvetica')
-        .text(cell, startX + i * colWidth + 4, rowY + 6, { width: colWidth - 8, lineBreak: false })
+      doc.fillColor('#333').fontSize(8.5).font('Helvetica')
+        .text(cell, startX + i * colWidth + PH, rowY + PV, {
+          width: colWidth - PH * 2, lineBreak: true, height: rh - PV * 2,
+        })
     })
-    doc.y = rowY + rowH
+    doc.y = rowY + rh
   })
 }
