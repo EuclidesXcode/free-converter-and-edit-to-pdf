@@ -5,7 +5,13 @@ import type { AnyNode, Element as DomElement } from 'domhandler'
 // ── DOCX ──────────────────────────────────────────────────────────────────────
 export async function docxToPdf(buffer: Buffer): Promise<Buffer> {
   const mammoth = await import('mammoth')
-  const { value: html } = await mammoth.convertToHtml({ buffer })
+  const { value: html } = await mammoth.convertToHtml({ buffer }, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    convertImage: (mammoth as any).images.imgElement(async (image: any) => {
+      const buf: Buffer = await image.read()
+      return { src: `data:${image.contentType};base64,${buf.toString('base64')}` }
+    }),
+  })
   return htmlToPdf(html)
 }
 
@@ -232,6 +238,29 @@ function renderChildren(
           doc.font('Courier').fontSize(9.5).fillColor('#222').text(rawText, { lineGap: 2 })
           doc.moveDown(0.4)
         }
+        break
+      case 'img': {
+        const src = (domEl.attribs as Record<string, string>)?.src ?? ''
+        if (!src.startsWith('data:')) break
+        // pdfkit supports JPEG and PNG natively; skip SVG/WebP/GIF
+        const match = src.match(/^data:(image\/(?:png|jpeg|jpg));base64,(.+)$/i)
+        if (!match) break
+        const maxW = doc.page.width - doc.page.margins.left - doc.page.margins.right
+        const maxH = Math.min(380, doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 80)
+        if (doc.y + 60 > doc.page.height - doc.page.margins.bottom) doc.addPage()
+        try {
+          const imgBuf = Buffer.from(match[2], 'base64')
+          const yBefore = doc.y
+          doc.image(imgBuf, doc.page.margins.left, doc.y, { fit: [maxW, maxH], align: 'center' })
+          // If pdfkit didn't advance doc.y (behavior varies by version), force it
+          if (doc.y <= yBefore) doc.y = yBefore + maxH
+          doc.moveDown(0.5)
+        } catch { /* skip unrenderable image */ }
+        break
+      }
+      case 'figure':
+        renderChildren(doc, $, $el.contents().toArray(), depth)
+        doc.moveDown(0.3)
         break
       default:
         renderChildren(doc, $, $el.contents().toArray(), depth)
