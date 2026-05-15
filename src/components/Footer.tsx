@@ -1,7 +1,8 @@
 'use client'
 import React from 'react'
-import { Box, Container, Typography, Stack, Link } from '@mui/material'
+import { Box, Container, Typography, Stack, Chip } from '@mui/material'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
+import { version } from '../../package.json'
 
 export default function Footer() {
   return (
@@ -21,6 +22,11 @@ export default function Footer() {
             <Typography variant="body2" fontWeight={700} color="text.primary">
               Conversor e Editor de PDF Gratuito
             </Typography>
+            <Chip
+              label={`v${version}`}
+              size="small"
+              sx={{ fontSize: 11, height: 20, bgcolor: '#EBF2FF', color: 'primary.main', fontWeight: 600 }}
+            />
           </Stack>
           <Typography variant="caption" color="text.secondary" textAlign="center">
             100% grátis · Sem cadastro · Seus arquivos nunca são armazenados ou compartilhados.

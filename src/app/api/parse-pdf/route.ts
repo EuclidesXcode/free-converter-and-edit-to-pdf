@@ -83,9 +83,10 @@ function installDOMMatrixPolyfill() {
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TextItem { x: number; y: number; str: string; width: number }
 interface TextLine { y: number; items: TextItem[] }
+interface PageData { lines: TextLine[]; pageW: number }
 
 // ── PDF structured extraction ─────────────────────────────────────────────────
-async function extractPages(buffer: Buffer): Promise<{ pages: TextLine[][]; numPages: number }> {
+async function extractPages(buffer: Buffer): Promise<{ pages: PageData[]; numPages: number }> {
   installDOMMatrixPolyfill()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js') as any
@@ -99,10 +100,13 @@ async function extractPages(buffer: Buffer): Promise<{ pages: TextLine[][]; numP
   }).promise
 
   const numPages: number = pdfDoc.numPages
-  const pages: TextLine[][] = []
+  const pages: PageData[] = []
 
   for (let p = 1; p <= numPages; p++) {
     const page = await pdfDoc.getPage(p)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const view: number[] = (page as any).view ?? [0, 0, 595, 842]
+    const pageW = view[2] - view[0]
     const content = await page.getTextContent()
 
     // Group items into lines by Y-proximity (4pt tolerance)
@@ -130,7 +134,7 @@ async function extractPages(buffer: Buffer): Promise<{ pages: TextLine[][]; numP
       .sort((a, b) => b.y - a.y)
       .map((g) => ({ y: g.y, items: g.items.sort((a, b) => a.x - b.x) }))
 
-    pages.push(lines)
+    pages.push({ lines, pageW })
   }
 
   return { pages, numPages }
@@ -140,22 +144,26 @@ async function extractPages(buffer: Buffer): Promise<{ pages: TextLine[][]; numP
 
 /**
  * Given a set of lines, return the X-start positions of detected columns.
- * Returns [] if no consistent column structure is found.
+ * Returns [] if no consistent column structure is found (< 3 columns).
  */
 function detectColumnBoundaries(lines: TextLine[]): number[] {
   if (lines.length < 2) return []
 
-  // Collect all X positions (rounded to nearest 5pt to reduce noise)
+  // Collect all first-item X positions per line (true column starts, rounded to 8pt grid)
   const xCounts = new Map<number, number>()
   for (const line of lines) {
+    const seen = new Set<number>()
     for (const item of line.items) {
-      const rounded = Math.round(item.x / 5) * 5
-      xCounts.set(rounded, (xCounts.get(rounded) ?? 0) + 1)
+      const rounded = Math.round(item.x / 8) * 8
+      if (!seen.has(rounded)) {
+        xCounts.set(rounded, (xCounts.get(rounded) ?? 0) + 1)
+        seen.add(rounded)
+      }
     }
   }
 
-  // Keep X positions that appear in at least 20% of lines (frequent column starts)
-  const minFreq = Math.max(2, Math.floor(lines.length * 0.2))
+  // Keep X positions that appear in at least 25% of lines
+  const minFreq = Math.max(2, Math.floor(lines.length * 0.25))
   const frequentX = Array.from(xCounts.entries())
     .filter(([, count]) => count >= minFreq)
     .map(([x]) => x)
@@ -163,40 +171,41 @@ function detectColumnBoundaries(lines: TextLine[]): number[] {
 
   if (frequentX.length < 2) return []
 
-  // Merge X values that are within 15pt of each other into one boundary
+  // Merge X values within 20pt into one boundary (take the smallest in each cluster)
   const boundaries: number[] = [frequentX[0]]
   for (let i = 1; i < frequentX.length; i++) {
-    if (frequentX[i] - boundaries[boundaries.length - 1] > 15) {
+    if (frequentX[i] - boundaries[boundaries.length - 1] > 20) {
       boundaries.push(frequentX[i])
     }
   }
 
-  return boundaries.length >= 2 ? boundaries : []
+  // Require at least 3 column boundaries so simple "Label: Value" lines don't qualify
+  return boundaries.length >= 3 ? boundaries : []
 }
 
-/** Assign a text item to a column index based on its X position. */
+/** Assign a text item to the nearest column index based on its X position. */
 function assignColumn(x: number, boundaries: number[]): number {
   let col = 0
   for (let i = 1; i < boundaries.length; i++) {
-    if (x >= boundaries[i] - 8) col = i
+    if (x >= boundaries[i] - 10) col = i
   }
   return col
 }
 
 /**
- * A line is "multi-column" if its items span more than 25% of the page width
- * and there is at least a 20pt gap between consecutive items.
+ * A line qualifies as "multi-column" if its items span ≥ 35% of the page width
+ * AND have at least 2 significant gaps (≥ 18pt) — meaning at least 3 distinct zones.
  */
-function isMultiColumn(line: TextLine, pageW = 500): boolean {
+function isMultiColumn(line: TextLine, pageW: number): boolean {
   if (line.items.length < 2) return false
   const span = line.items[line.items.length - 1].x - line.items[0].x
-  if (span < pageW * 0.25) return false
-  // At least one pair of adjacent items has a gap > 20pt
+  if (span < pageW * 0.35) return false
+  let gapCount = 0
   for (let i = 1; i < line.items.length; i++) {
     const gap = line.items[i].x - (line.items[i - 1].x + line.items[i - 1].width)
-    if (gap > 20) return true
+    if (gap > 18) gapCount++
   }
-  return false
+  return gapCount >= 2
 }
 
 // ── HTML builder ──────────────────────────────────────────────────────────────
@@ -235,34 +244,37 @@ function classifyLine(text: string): 'h2' | 'h3' | 'p' {
   return 'p'
 }
 
-function buildHtml(pages: TextLine[][]): string {
+function buildHtml(pages: PageData[]): string {
   const html: string[] = []
-  const PAGE_W = 500 // approximate usable width in pts for A4
+  const MIN_TABLE_RUN = 4  // require this many consecutive multi-col lines
 
-  for (const lines of pages) {
+  for (const { lines, pageW } of pages) {
     if (!lines.length) continue
 
-    // ── Segment the page into table runs vs text runs ──────────────────────
-    // A "table candidate" line must be multi-column AND appear in a run of ≥3
-    const isTable: boolean[] = lines.map((l) => isMultiColumn(l, PAGE_W))
+    // ── Mark each line as multi-column using real page width ──────────────
+    const isTableCandidate: boolean[] = lines.map((l) => isMultiColumn(l, pageW))
 
-    // Smooth: require a run of ≥3 consecutive multi-column lines to count as table
-    const inTable: boolean[] = [...isTable]
-    for (let i = 0; i < inTable.length; i++) {
-      if (inTable[i]) {
-        // Extend a window: check neighbours
-        const windowStart = Math.max(0, i - 2)
-        const windowEnd = Math.min(inTable.length - 1, i + 2)
-        let runCount = 0
-        for (let k = windowStart; k <= windowEnd; k++) if (isTable[k]) runCount++
-        if (runCount < 3) inTable[i] = false
+    // ── Find true consecutive runs of ≥ MIN_TABLE_RUN and mark them ───────
+    const inTable: boolean[] = new Array(lines.length).fill(false)
+    let runStart = -1
+    for (let i = 0; i <= lines.length; i++) {
+      const val = i < lines.length && isTableCandidate[i]
+      if (val) {
+        if (runStart === -1) runStart = i
+      } else {
+        if (runStart !== -1) {
+          if (i - runStart >= MIN_TABLE_RUN) {
+            for (let k = runStart; k < i; k++) inTable[k] = true
+          }
+          runStart = -1
+        }
       }
     }
 
     let i = 0
     while (i < lines.length) {
       if (inTable[i]) {
-        // Collect the full table run
+        // ── Collect the full consecutive table run ──────────────────────
         const tableLines: TextLine[] = []
         while (i < lines.length && inTable[i]) {
           tableLines.push(lines[i])
@@ -270,7 +282,7 @@ function buildHtml(pages: TextLine[][]): string {
         }
 
         const cols = detectColumnBoundaries(tableLines)
-        if (cols.length >= 2) {
+        if (cols.length >= 3) {
           html.push('<table>')
           for (const tl of tableLines) {
             const cells: string[] = new Array(cols.length).fill('')
@@ -278,22 +290,22 @@ function buildHtml(pages: TextLine[][]): string {
               const col = assignColumn(item.x, cols)
               cells[col] += (cells[col] ? ' ' : '') + item.str
             }
-            // Detect header row heuristic: first row or text is ALL CAPS / bold-like
-            const isHeader = tableLines.indexOf(tl) === 0 ||
-              cells.every((c) => c === c.toUpperCase() && c.trim().length > 0)
+            const isHeader =
+              tableLines.indexOf(tl) === 0 ||
+              cells.filter((c) => c.trim()).every((c) => c.trim() === c.trim().toUpperCase())
             const td = isHeader ? 'th' : 'td'
             html.push('<tr>' + cells.map((c) => `<${td}>${esc(c.trim())}</${td}>`).join('') + '</tr>')
           }
           html.push('</table>')
         } else {
-          // Column detection failed — fall back to joined text
+          // Column detection insufficient — render as spaced text
           for (const tl of tableLines) {
             const text = lineToText(tl)
             if (text) html.push(`<p>${esc(text)}</p>`)
           }
         }
       } else {
-        // Single text line
+        // ── Single text line ────────────────────────────────────────────
         const text = lineToText(lines[i])
         if (text) {
           const tag = classifyLine(text)
@@ -303,13 +315,10 @@ function buildHtml(pages: TextLine[][]): string {
       }
     }
 
-    // Page break between pages (hr)
     html.push('<hr>')
   }
 
-  // Remove trailing <hr>
   if (html[html.length - 1] === '<hr>') html.pop()
-
   return html.join('\n')
 }
 
@@ -328,7 +337,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer())
     const { pages, numPages } = await extractPages(buffer)
 
-    const totalLines = pages.reduce((s, p) => s + p.length, 0)
+    const totalLines = pages.reduce((s, p) => s + p.lines.length, 0)
     if (totalLines === 0) {
       return NextResponse.json(
         { error: 'Este PDF não contém texto extraível (pode ser um PDF de imagem/escaneado).' },
