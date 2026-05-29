@@ -16,4 +16,6 @@ export interface TextAnnotation {
   text: string
   fontSize: number
   color: string
+  /** Draw a white box behind the text to cover underlying original content. */
+  cover?: boolean
 }

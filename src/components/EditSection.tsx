@@ -1,188 +1,93 @@
 'use client'
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import {
-  Box, Typography, Button, Tooltip, IconButton, Paper,
-  TextField, Alert, CircularProgress, Chip, Divider,
+  Box, Typography, Button, Tooltip, Paper,
+  Alert, CircularProgress, Chip, Slider, Stack, Switch, FormControlLabel,
 } from '@mui/material'
 import { useDropzone } from 'react-dropzone'
-import { useEditor, EditorContent, type Editor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
-import TextAlign from '@tiptap/extension-text-align'
-import { Image } from '@tiptap/extension-image'
-import { Table } from '@tiptap/extension-table'
-import { TableRow } from '@tiptap/extension-table-row'
-import { TableHeader } from '@tiptap/extension-table-header'
-import { TableCell } from '@tiptap/extension-table-cell'
-import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import DownloadIcon from '@mui/icons-material/Download'
-import FormatBoldIcon from '@mui/icons-material/FormatBold'
-import FormatItalicIcon from '@mui/icons-material/FormatItalic'
-import FormatUnderlinedIcon from '@mui/icons-material/FormatUnderlined'
-import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted'
-import FormatListNumberedIcon from '@mui/icons-material/FormatListNumbered'
-import FormatAlignLeftIcon from '@mui/icons-material/FormatAlignLeft'
-import FormatAlignCenterIcon from '@mui/icons-material/FormatAlignCenter'
-import FormatAlignRightIcon from '@mui/icons-material/FormatAlignRight'
-import UndoIcon from '@mui/icons-material/Undo'
-import RedoIcon from '@mui/icons-material/Redo'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
-import StrikethroughSIcon from '@mui/icons-material/StrikethroughS'
-import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
+import DeleteIcon from '@mui/icons-material/Delete'
+import TextFieldsIcon from '@mui/icons-material/TextFields'
+import type { TextAnnotation } from '@/types'
 
-// ── Toolbar button ─────────────────────────────────────────────────────────────
-function ToolbarBtn({
-  active, disabled, tooltip, onClick, children,
-}: {
-  active?: boolean; disabled?: boolean; tooltip: string
-  onClick: () => void; children: React.ReactNode
-}) {
-  return (
-    <Tooltip title={tooltip} arrow>
-      <span>
-        <IconButton
-          size="small"
-          disabled={disabled}
-          onClick={onClick}
-          sx={{
-            borderRadius: 1.5,
-            bgcolor: active ? 'primary.main' : 'transparent',
-            color: active ? '#fff' : 'text.primary',
-            '&:hover': { bgcolor: active ? 'primary.dark' : 'action.hover' },
-            width: 32,
-            height: 32,
-          }}
-        >
-          {children}
-        </IconButton>
-      </span>
-    </Tooltip>
-  )
+// ── PDF.js loader (browser) ─────────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let pdfjsPromise: Promise<any> | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function loadPdfjs(): Promise<any> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.js').then((lib) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(lib as any).GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
+      return lib
+    })
+  }
+  return pdfjsPromise
 }
 
-function EditorToolbar({ editor }: { editor: Editor | null }) {
-  if (!editor) return null
-  const s = { fontSize: 17 }
-  return (
-    <Paper
-      elevation={0}
-      sx={{
-        border: '1px solid #E4EAF2',
-        borderRadius: '12px 12px 0 0',
-        px: 1.5, py: 1,
-        display: 'flex', alignItems: 'center', gap: 0.25, flexWrap: 'wrap',
-        bgcolor: '#FAFCFF',
-      }}
-    >
-      <ToolbarBtn tooltip="Desfazer" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}><UndoIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Refazer" disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}><RedoIcon sx={s} /></ToolbarBtn>
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-      {([1, 2, 3] as const).map((lv) => (
-        <ToolbarBtn key={lv} tooltip={`Título ${lv}`} active={editor.isActive('heading', { level: lv })} onClick={() => editor.chain().focus().toggleHeading({ level: lv }).run()}>
-          <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, lineHeight: 1 }}>H{lv}</Typography>
-        </ToolbarBtn>
-      ))}
-      <ToolbarBtn tooltip="Parágrafo" active={editor.isActive('paragraph')} onClick={() => editor.chain().focus().setParagraph().run()}>
-        <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11 }}>P</Typography>
-      </ToolbarBtn>
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-      <ToolbarBtn tooltip="Negrito" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><FormatBoldIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Itálico" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><FormatItalicIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Sublinhado" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><FormatUnderlinedIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Tachado" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}><StrikethroughSIcon sx={s} /></ToolbarBtn>
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-      <ToolbarBtn tooltip="Lista com marcadores" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><FormatListBulletedIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Lista numerada" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><FormatListNumberedIcon sx={s} /></ToolbarBtn>
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-      <ToolbarBtn tooltip="Esquerda" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}><FormatAlignLeftIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Centralizar" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}><FormatAlignCenterIcon sx={s} /></ToolbarBtn>
-      <ToolbarBtn tooltip="Direita" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}><FormatAlignRightIcon sx={s} /></ToolbarBtn>
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 0.5 }} />
-      <ToolbarBtn tooltip="Linha horizontal" onClick={() => editor.chain().focus().setHorizontalRule().run()}><HorizontalRuleIcon sx={s} /></ToolbarBtn>
-    </Paper>
-  )
-}
+interface RenderedPage { width: number; height: number; dataUrl: string }
 
-// ── Main ───────────────────────────────────────────────────────────────────────
+const COLORS = ['#000000', '#D32F2F', '#1565C0', '#2E7D32', '#E65100', '#FFFFFF']
+
 export default function EditSection() {
   const [step, setStep] = useState<'upload' | 'editing'>('upload')
   const [docTitle, setDocTitle] = useState('')
-  const [pages, setPages] = useState(0)
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [renderedPages, setRenderedPages] = useState<RenderedPage[]>([])
+  const [annotations, setAnnotations] = useState<TextAnnotation[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
   const [error, setError] = useState('')
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Underline,
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-    ],
-    immediatelyRender: false,
-    content: '',
-    editorProps: { attributes: { class: 'tiptap-doc' } },
-  })
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([])
+  // displayScale[i] = displayedPageWidthPx / pdfPageWidthPt — converts PDF
+  // point sizes to on-screen pixels so text previews at its true final size.
+  const [displayScale, setDisplayScale] = useState<number[]>([])
 
-  useEffect(() => {
-    const style = document.createElement('style')
-    style.textContent = `
-      .tiptap-doc { outline:none; min-height:600px; font-family:"Inter","Roboto",Arial,sans-serif; font-size:1rem; line-height:1.8; color:#1A1A2E; }
-      .tiptap-doc h1 { font-size:2em; font-weight:700; margin:.6em 0 .3em; color:#0D47A1; }
-      .tiptap-doc h2 { font-size:1.5em; font-weight:700; margin:.5em 0 .25em; color:#1A1A2E; }
-      .tiptap-doc h3 { font-size:1.2em; font-weight:600; margin:.5em 0 .2em; color:#1A1A2E; }
-      .tiptap-doc p  { margin:.4em 0; }
-      .tiptap-doc strong { font-weight:700; }
-      .tiptap-doc em { font-style:italic; }
-      .tiptap-doc u  { text-decoration:underline; }
-      .tiptap-doc s  { text-decoration:line-through; }
-      .tiptap-doc ul { padding-left:1.8em; margin:.4em 0; list-style:disc; }
-      .tiptap-doc ol { padding-left:1.8em; margin:.4em 0; list-style:decimal; }
-      .tiptap-doc li { margin:.2em 0; }
-      .tiptap-doc blockquote { border-left:4px solid #1565C0; padding-left:1em; margin:.8em 0; color:#444; font-style:italic; }
-      .tiptap-doc pre { background:#F4F6FA; border-radius:6px; padding:.8em 1.2em; font-family:monospace; font-size:.9em; overflow-x:auto; }
-      .tiptap-doc hr  { border:none; border-top:2px solid #E4EAF2; margin:1.2em 0; }
-      .tiptap-doc img { max-width:100%; height:auto; border-radius:4px; margin:.4em 0; }
-      .tiptap-doc table { border-collapse:collapse; width:100%; margin:.8em 0; }
-      .tiptap-doc td,.tiptap-doc th { border:1px solid #C5D5EA; padding:6px 10px; }
-      .tiptap-doc th { background:#EBF2FF; font-weight:700; }
-    `
-    document.head.appendChild(style)
-    return () => { document.head.removeChild(style) }
-  }, [])
-
-  const onDrop = useCallback(async (accepted: File[]) => {
-    const file = accepted[0]
-    if (!file) return
+  // ── Render the uploaded PDF to images ──────────────────────────────────────
+  const renderPdf = useCallback(async (file: File) => {
     setIsLoading(true)
     setError('')
-
     try {
-      const formData = new FormData()
-      formData.append('file', file)
+      const pdfjs = await loadPdfjs()
+      const buf = await file.arrayBuffer()
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise
 
-      const res = await fetch('/api/parse-pdf', { method: 'POST', body: formData })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error ?? 'Falha ao processar o PDF')
+      const pages: RenderedPage[] = []
+      const scale = 1.5 // render at 1.5x for crisp display
+      for (let p = 1; p <= doc.numPages; p++) {
+        const page = await doc.getPage(p)
+        const viewport = page.getViewport({ scale })
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.ceil(viewport.width)
+        canvas.height = Math.ceil(viewport.height)
+        const ctx = canvas.getContext('2d')!
+        await page.render({ canvasContext: ctx, viewport }).promise
+        pages.push({
+          width: viewport.width / scale,   // CSS points (1x) for the layer math
+          height: viewport.height / scale,
+          dataUrl: canvas.toDataURL('image/png'),
+        })
       }
-
-      const { html, title, pages: numPages } = await res.json() as { html: string; title: string; pages: number }
-      setDocTitle(title)
-      setPages(numPages)
-      editor?.commands.setContent(html)
+      setRenderedPages(pages)
+      setDocTitle(file.name.replace(/\.pdf$/i, ''))
+      setPdfFile(file)
+      setAnnotations([])
       setStep('editing')
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Erro inesperado')
+      setError(e instanceof Error ? e.message : 'Falha ao abrir o PDF')
     } finally {
       setIsLoading(false)
     }
-  }, [editor])
+  }, [])
+
+  const onDrop = useCallback((accepted: File[]) => {
+    const file = accepted[0]
+    if (file) renderPdf(file)
+  }, [renderPdf])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -191,16 +96,41 @@ export default function EditSection() {
     disabled: isLoading,
   })
 
+  // ── Annotation handling ─────────────────────────────────────────────────────
+  const addAnnotationAt = (pageIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
+    // Ignore clicks that land on an existing annotation box.
+    if ((e.target as HTMLElement).closest('[data-annotation]')) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const xFraction = (e.clientX - rect.left) / rect.width
+    const yFraction = (e.clientY - rect.top) / rect.height
+    const id = crypto.randomUUID()
+    setAnnotations((prev) => [
+      ...prev,
+      { id, pageIndex, xFraction, yFraction, text: '', fontSize: 14, color: '#000000', cover: false },
+    ])
+    setActiveId(id)
+  }
+
+  const updateAnnotation = (id: string, patch: Partial<TextAnnotation>) =>
+    setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)))
+
+  const removeAnnotation = (id: string) => {
+    setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    if (activeId === id) setActiveId(null)
+  }
+
+  const active = annotations.find((a) => a.id === activeId) ?? null
+
+  // ── Download (apply edits over the original via pdf-lib) ─────────────────────
   const handleDownload = async () => {
-    if (!editor) return
+    if (!pdfFile) return
     setIsDownloading(true)
     setError('')
     try {
-      const res = await fetch('/api/html-to-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html: editor.getHTML(), title: docTitle }),
-      })
+      const fd = new FormData()
+      fd.append('pdf', pdfFile)
+      fd.append('annotations', JSON.stringify(annotations.filter((a) => a.text.trim())))
+      const res = await fetch('/api/edit', { method: 'POST', body: fd })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error ?? 'Falha ao gerar PDF')
@@ -219,7 +149,29 @@ export default function EditSection() {
     }
   }
 
-  // ── Upload ─────────────────────────────────────────────────────────────────
+  // Keep the active selection in sync if it gets deleted elsewhere.
+  useEffect(() => {
+    if (activeId && !annotations.some((a) => a.id === activeId)) setActiveId(null)
+  }, [annotations, activeId])
+
+  // Measure each page's on-screen width to derive the point→pixel scale, and
+  // keep it current on resize so font previews stay true to the final PDF.
+  useEffect(() => {
+    if (step !== 'editing' || !renderedPages.length) return
+    const measure = () => {
+      setDisplayScale(renderedPages.map((pg, i) => {
+        const el = pageRefs.current[i]
+        return el ? el.clientWidth / pg.width : 1
+      }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    pageRefs.current.forEach((el) => el && ro.observe(el))
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [step, renderedPages])
+
+  // ── Upload screen ────────────────────────────────────────────────────────────
   if (step === 'upload') {
     return (
       <Box>
@@ -249,26 +201,25 @@ export default function EditSection() {
           >
             {isLoading
               ? <CircularProgress size={32} sx={{ color: '#fff' }} />
-              : <PictureAsPdfIcon sx={{ color: '#fff', fontSize: 36 }} />
-            }
+              : <PictureAsPdfIcon sx={{ color: '#fff', fontSize: 36 }} />}
           </Box>
           <Typography variant="h6" fontWeight={700} mb={0.5}>
-            {isLoading ? 'Lendo o PDF…' : isDragActive ? 'Solte o PDF aqui' : 'Faça upload do PDF para editar'}
+            {isLoading ? 'Abrindo o PDF…' : isDragActive ? 'Solte o PDF aqui' : 'Faça upload do PDF para editar'}
           </Typography>
           <Typography variant="body2" color="text.secondary" mb={2}>
-            {isLoading ? 'Extraindo o conteúdo de texto…' : 'Arraste e solte ou clique para selecionar'}
+            {isLoading ? 'Renderizando as páginas…' : 'Arraste e solte ou clique para selecionar'}
           </Typography>
           <Chip label=".PDF" size="small" sx={{ bgcolor: 'rgba(230,81,0,0.1)', color: 'secondary.dark', fontWeight: 700 }} />
         </Box>
 
-        <Box mt={3} p={2.5} sx={{ bgcolor: '#FFF8F0', borderRadius: 3, border: '1px solid #FFD0A0' }}>
-          <Typography variant="body2" color="secondary.dark" fontWeight={600} mb={0.75}>
-            ⚠️ Observação importante
+        <Box mt={3} p={2.5} sx={{ bgcolor: '#F0F7FF', borderRadius: 3, border: '1px solid #B9D6F2' }}>
+          <Typography variant="body2" color="primary.dark" fontWeight={600} mb={0.75}>
+            ℹ️ Como funciona
           </Typography>
           <Typography variant="body2" color="text.secondary" lineHeight={1.7}>
-            Esta ferramenta extrai o <strong>texto</strong> do PDF e abre no editor. Funciona bem
-            para PDFs com texto selecionável (contratos, relatórios, propostas).
-            PDFs compostos por imagens ou escaneados não têm texto extraível.
+            O PDF é exibido <strong>exatamente como o original</strong>. Clique em qualquer
+            ponto da página para adicionar texto, e use a opção “cobrir” para tampar o
+            conteúdo embaixo. O download preserva o documento original com as suas edições.
           </Typography>
         </Box>
 
@@ -281,83 +232,187 @@ export default function EditSection() {
     )
   }
 
-  // ── Editor ─────────────────────────────────────────────────────────────────
+  // ── Editing screen ─────────────────────────────────────────────────────────
   return (
     <Box>
       {/* Action bar */}
       <Paper
         elevation={0}
         sx={{
-          border: '1px solid #E4EAF2',
-          borderRadius: 3,
-          px: 2, py: 1.5, mb: 2,
+          border: '1px solid #E4EAF2', borderRadius: 3, px: 2, py: 1.5, mb: 2,
           display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
         }}
       >
-        <CloudUploadIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
-        <TextField
-          value={docTitle}
-          onChange={(e) => setDocTitle(e.target.value)}
-          variant="standard"
+        <PictureAsPdfIcon sx={{ color: 'secondary.main' }} />
+        <Typography fontWeight={700} noWrap sx={{ flex: 1, minWidth: 120 }}>{docTitle}</Typography>
+        <Chip
+          label={`${renderedPages.length} página${renderedPages.length !== 1 ? 's' : ''}`}
           size="small"
-          placeholder="Nome do documento"
-          inputProps={{ style: { fontWeight: 700, fontSize: '1rem' } }}
-          sx={{ flex: 1, minWidth: 160 }}
+          sx={{ bgcolor: 'rgba(21,101,192,0.1)', color: 'primary.dark', fontWeight: 600 }}
         />
-        {pages > 0 && (
-          <Chip
-            label={`${pages} página${pages !== 1 ? 's' : ''}`}
-            size="small"
-            sx={{ bgcolor: 'rgba(21,101,192,0.1)', color: 'primary.dark', fontWeight: 600 }}
-          />
+        {annotations.length > 0 && (
+          <Chip label={`${annotations.length} edição${annotations.length !== 1 ? 'es' : ''}`} size="small" color="secondary" variant="outlined" />
         )}
         <Box flex={1} />
         <Button
-          variant="outlined"
-          size="small"
-          startIcon={<UploadFileIcon />}
-          onClick={() => { setStep('upload'); editor?.commands.clearContent() }}
+          variant="outlined" size="small" startIcon={<UploadFileIcon />}
+          onClick={() => { setStep('upload'); setRenderedPages([]); setAnnotations([]); setPdfFile(null) }}
         >
           Trocar PDF
         </Button>
         <Button
-          variant="contained"
-          size="small"
+          variant="contained" size="small"
           startIcon={isDownloading ? <CircularProgress size={14} color="inherit" /> : <DownloadIcon />}
-          onClick={handleDownload}
-          disabled={isDownloading}
+          onClick={handleDownload} disabled={isDownloading}
         >
-          {isDownloading ? 'Gerando PDF…' : 'Baixar como PDF'}
+          {isDownloading ? 'Gerando…' : 'Baixar PDF'}
         </Button>
       </Paper>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
-          {error}
-        </Alert>
+        <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>{error}</Alert>
       )}
 
-      {/* Editor area */}
-      <Box sx={{ bgcolor: '#E8ECF2', borderRadius: 3, p: { xs: 2, md: 4 }, minHeight: 700 }}>
-        <Box sx={{ maxWidth: 820, mx: 'auto' }}>
-          <EditorToolbar editor={editor} />
-          <Box
-            sx={{
-              bgcolor: '#fff',
-              border: '1px solid #E4EAF2',
-              borderTop: 'none',
-              borderRadius: '0 0 12px 12px',
-              px: { xs: 3, md: 6 },
-              py: 5,
-              boxShadow: '0 8px 40px rgba(0,0,0,0.1)',
-              minHeight: 600,
-              cursor: 'text',
-            }}
-            onClick={() => editor?.commands.focus()}
-          >
-            {editor && <EditorContent editor={editor} />}
-          </Box>
+      <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', flexWrap: { xs: 'wrap', md: 'nowrap' } }}>
+        {/* Pages */}
+        <Box sx={{ flex: 1, bgcolor: '#E8ECF2', borderRadius: 3, p: { xs: 1.5, md: 3 }, minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5, textAlign: 'center' }}>
+            <TextFieldsIcon sx={{ fontSize: 14, verticalAlign: 'middle', mr: 0.5 }} />
+            Clique em qualquer lugar da página para adicionar texto
+          </Typography>
+          <Stack spacing={3} alignItems="center">
+            {renderedPages.map((pg, i) => {
+              const scale = displayScale[i] ?? 1
+              return (
+                <Box
+                  key={i}
+                  ref={(el: HTMLDivElement | null) => { pageRefs.current[i] = el }}
+                  data-page={i}
+                  onClick={(e) => addAnnotationAt(i, e)}
+                  sx={{
+                    position: 'relative',
+                    width: '100%',
+                    maxWidth: 800,
+                    aspectRatio: `${pg.width} / ${pg.height}`,
+                    boxShadow: '0 8px 40px rgba(0,0,0,0.12)',
+                    cursor: 'crosshair',
+                    bgcolor: '#fff',
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={pg.dataUrl} alt={`Página ${i + 1}`} style={{ width: '100%', display: 'block' }} />
+
+                  {/* Annotation boxes for this page */}
+                  {annotations.filter((a) => a.pageIndex === i).map((a) => (
+                    <Box
+                      key={a.id}
+                      data-annotation
+                      onClick={(e) => { e.stopPropagation(); setActiveId(a.id) }}
+                      sx={{
+                        position: 'absolute',
+                        left: `${a.xFraction * 100}%`,
+                        top: `${a.yFraction * 100}%`,
+                        outline: activeId === a.id ? '2px solid #1565C0' : '1px dashed rgba(21,101,192,0.5)',
+                        bgcolor: a.cover ? '#fff' : 'transparent',
+                        borderRadius: 0.5,
+                        px: 0.25,
+                        minWidth: 8,
+                      }}
+                    >
+                      <Box
+                        component="textarea"
+                        value={a.text}
+                        autoFocus={activeId === a.id}
+                        placeholder="Digite…"
+                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                          updateAnnotation(a.id, { text: e.target.value })}
+                        onFocus={() => setActiveId(a.id)}
+                        sx={{
+                          border: 'none', outline: 'none', background: 'transparent',
+                          resize: 'none', overflow: 'hidden', p: 0, m: 0,
+                          fontFamily: 'Helvetica, Arial, sans-serif',
+                          // fontSize is in PDF points; scale to on-screen pixels
+                          // so the preview matches the final PDF exactly.
+                          fontSize: `${a.fontSize * scale}px`,
+                          lineHeight: 1.25,
+                          color: a.color,
+                          width: `${Math.max(a.text.length, 4)}ch`,
+                          minHeight: `${a.fontSize * scale * 1.3}px`,
+                        }}
+                      />
+                    </Box>
+                  ))}
+                </Box>
+              )
+            })}
+          </Stack>
         </Box>
+
+        {/* Inspector */}
+        <Paper
+          elevation={0}
+          sx={{
+            width: { xs: '100%', md: 260 }, flexShrink: 0,
+            border: '1px solid #E4EAF2', borderRadius: 3, p: 2,
+            position: { md: 'sticky' }, top: { md: 16 },
+          }}
+        >
+          {active ? (
+            <Stack spacing={2}>
+              <Typography variant="subtitle2" fontWeight={700}>Editar texto</Typography>
+
+              <Box>
+                <Typography variant="caption" color="text.secondary">Tamanho: {active.fontSize}pt</Typography>
+                <Slider
+                  size="small" min={6} max={72} value={active.fontSize}
+                  onChange={(_, v) => updateAnnotation(active.id, { fontSize: v as number })}
+                />
+              </Box>
+
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>Cor</Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  {COLORS.map((c) => (
+                    <Box
+                      key={c}
+                      onClick={() => updateAnnotation(active.id, { color: c })}
+                      sx={{
+                        width: 24, height: 24, borderRadius: '50%', bgcolor: c, cursor: 'pointer',
+                        border: c === '#FFFFFF' ? '1px solid #ccc' : 'none',
+                        outline: active.color === c ? '2px solid #1565C0' : 'none',
+                        outlineOffset: 2,
+                      }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small" checked={!!active.cover}
+                    onChange={(e) => updateAnnotation(active.id, { cover: e.target.checked })}
+                  />
+                }
+                label={<Typography variant="body2">Cobrir conteúdo embaixo</Typography>}
+              />
+
+              <Tooltip title="Remover este texto">
+                <Button
+                  variant="outlined" color="error" size="small" startIcon={<DeleteIcon />}
+                  onClick={() => removeAnnotation(active.id)}
+                >
+                  Remover
+                </Button>
+              </Tooltip>
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Clique na página para adicionar texto, ou selecione uma edição existente para
+              ajustar tamanho, cor e cobertura.
+            </Typography>
+          )}
+        </Paper>
       </Box>
     </Box>
   )

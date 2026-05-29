@@ -7,7 +7,9 @@ export const dynamic = 'force-dynamic'
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const clean = hex.replace('#', '')
-  const bigint = parseInt(clean, 16)
+  const bigint = parseInt(clean.length === 3
+    ? clean.split('').map(c => c + c).join('')
+    : clean, 16)
   return {
     r: ((bigint >> 16) & 255) / 255,
     g: ((bigint >> 8) & 255) / 255,
@@ -37,27 +39,43 @@ export async function POST(request: NextRequest) {
       if (!page) continue
 
       const { width, height } = page.getSize()
-      const x = ann.xFraction * width
-      // PDF y-axis starts from bottom-left; convert from top-origin fraction
-      const y = height - ann.yFraction * height
-
-      const { r, g, b } = hexToRgb(ann.color ?? '#000000')
       const fontSize = Math.max(6, Math.min(ann.fontSize ?? 14, 144))
 
+      // The front-end reports the TOP-LEFT of the text box as a fraction of the
+      // rendered page. PDF space has a bottom-left origin and drawText anchors
+      // at the text baseline, so drop ~one ascent below the box top.
+      const x = ann.xFraction * width
+      const topY = height - ann.yFraction * height
+      const baselineY = topY - fontSize
+
+      const { r, g, b } = hexToRgb(ann.color ?? '#000000')
+
+      // Optional white knock-out box behind the text so edits can cover the
+      // underlying original content (used for "replace" edits).
+      if (ann.cover) {
+        const textWidth = font.widthOfTextAtSize(ann.text, fontSize)
+        page.drawRectangle({
+          x: x - 1,
+          y: baselineY - fontSize * 0.25,
+          width: Math.min(textWidth + 2, width - x),
+          height: fontSize * 1.35,
+          color: rgb(1, 1, 1),
+        })
+      }
+
       page.drawText(ann.text, {
-        x: Math.max(0, Math.min(x, width - 10)),
-        y: Math.max(fontSize, Math.min(y, height - 4)),
+        x: Math.max(0, Math.min(x, width - 4)),
+        y: Math.max(2, Math.min(baselineY, height - fontSize)),
         size: fontSize,
         font,
         color: rgb(r, g, b),
-        maxWidth: width - x - 10,
         lineHeight: fontSize * 1.3,
       })
     }
 
     const pdfBytes = await pdfDoc.save()
 
-    return new NextResponse(Buffer.from(pdfBytes), {
+    return new NextResponse(Buffer.from(pdfBytes) as unknown as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
