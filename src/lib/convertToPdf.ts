@@ -215,34 +215,38 @@ function renderChildren(
     const tag = domEl.name.toLowerCase()
     const $el = $(el) as Cheerio<AnyNode>
     const rawText = $el.text().trim()
+    const align = alignOf(domEl)
 
     switch (tag) {
       case 'h1':
         doc.moveDown(0.3)
-        doc.font('Helvetica-Bold').fontSize(22).fillColor('#1A1A2E').text(rawText)
+        doc.font('Helvetica-Bold').fontSize(22).fillColor('#1A1A2E').text(rawText, { align })
         doc.moveDown(0.4)
         break
       case 'h2':
         doc.moveDown(0.3)
-        doc.font('Helvetica-Bold').fontSize(18).fillColor('#1A1A2E').text(rawText)
+        doc.font('Helvetica-Bold').fontSize(18).fillColor('#1A1A2E').text(rawText, { align })
         doc.moveDown(0.3)
         break
       case 'h3':
         doc.moveDown(0.2)
-        doc.font('Helvetica-Bold').fontSize(15).fillColor('#1A1A2E').text(rawText)
+        doc.font('Helvetica-Bold').fontSize(15).fillColor('#1A1A2E').text(rawText, { align })
         doc.moveDown(0.2)
         break
       case 'h4':
       case 'h5':
       case 'h6':
         doc.moveDown(0.2)
-        doc.font('Helvetica-Bold').fontSize(13).fillColor('#333').text(rawText)
+        doc.font('Helvetica-Bold').fontSize(13).fillColor('#333').text(rawText, { align })
         doc.moveDown(0.2)
         break
       case 'p':
         if (rawText) {
-          renderInline(doc, $, $el.contents().toArray())
+          renderInline(doc, $, $el.contents().toArray(), align)
           doc.moveDown(0.6)
+        } else {
+          // Paragraph with no text may still wrap an image (e.g. <p><img></p>).
+          renderChildren(doc, $, $el.contents().toArray(), depth)
         }
         break
       case 'br':
@@ -340,7 +344,20 @@ function renderChildren(
   }
 }
 
-function renderInline(doc: PDFKit.PDFDocument, $: CheerioAPI, nodes: AnyNode[]) {
+type Align = 'left' | 'center' | 'right' | 'justify'
+
+/** Read text-align from an element's inline style or align attribute. */
+function alignOf(el: DomElement): Align {
+  const attrs = (el.attribs ?? {}) as Record<string, string>
+  const style = attrs.style ?? ''
+  const m = /text-align\s*:\s*(left|center|right|justify)/i.exec(style)
+  if (m) return m[1].toLowerCase() as Align
+  const a = (attrs.align ?? '').toLowerCase()
+  if (a === 'center' || a === 'right' || a === 'justify' || a === 'left') return a
+  return 'left'
+}
+
+function renderInline(doc: PDFKit.PDFDocument, $: CheerioAPI, nodes: AnyNode[], align: Align = 'left') {
   const segments: Array<{ text: string; bold: boolean; italic: boolean }> = []
 
   function collect(nodeList: AnyNode[], bold: boolean, italic: boolean) {
@@ -368,7 +385,9 @@ function renderInline(doc: PDFKit.PDFDocument, $: CheerioAPI, nodes: AnyNode[]) 
     const font = seg.bold
       ? seg.italic ? 'Helvetica-BoldOblique' : 'Helvetica-Bold'
       : seg.italic ? 'Helvetica-Oblique' : 'Helvetica'
-    doc.font(font).fontSize(11).fillColor('#222').text(seg.text, { continued, lineGap: 3 })
+    // pdfkit applies `align` only when the run is not continued, so pass it on
+    // every segment; intermediate (continued) runs ignore it harmlessly.
+    doc.font(font).fontSize(11).fillColor('#222').text(seg.text, { continued, lineGap: 3, align })
   }
 }
 

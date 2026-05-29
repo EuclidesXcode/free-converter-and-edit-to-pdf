@@ -70,9 +70,58 @@ function installDOMMatrixPolyfill() {
   ;(globalThis as Record<string, unknown>).DOMMatrix = DOMMatrixPolyfill
 }
 
+// ── Minimal PNG encoder (no native deps) ──────────────────────────────────────
+// pdf.js gives raw RGBA/RGB pixel buffers; we wrap them into a PNG so the
+// browser editor and the pdfkit renderer (which speaks PNG) can show them.
+import { deflateSync } from 'zlib'
+
+function crc32(buf: Buffer): number {
+  let c = ~0
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i]
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1))
+  }
+  return ~c >>> 0
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4)
+  len.writeUInt32BE(data.length, 0)
+  const typeBuf = Buffer.from(type, 'ascii')
+  const crc = Buffer.alloc(4)
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0)
+  return Buffer.concat([len, typeBuf, data, crc])
+}
+
+/** Encode an RGBA pixel buffer (width*height*4) as a PNG Buffer. */
+function encodePng(rgba: Uint8Array, width: number, height: number): Buffer {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8   // bit depth
+  ihdr[9] = 6   // color type RGBA
+  ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0
+  // Prepend a filter byte (0 = none) to each scanline
+  const stride = width * 4
+  const raw = Buffer.alloc((stride + 1) * height)
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = 0
+    raw.set(rgba.subarray(y * stride, y * stride + stride), y * (stride + 1) + 1)
+  }
+  const idat = deflateSync(raw)
+  return Buffer.concat([
+    sig,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', idat),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TextItem { x: number; y: number; str: string; width: number }
-interface RawPage { items: TextItem[]; pageW: number; pageH: number }
+interface ImageItem { y: number; dataUrl: string; w: number; h: number }
+interface RawPage { items: TextItem[]; images: ImageItem[]; pageW: number; pageH: number }
 
 // ── PDF raw item extraction ───────────────────────────────────────────────────
 async function extractPages(buffer: Buffer): Promise<{ pages: RawPage[]; numPages: number }> {
@@ -109,10 +158,104 @@ async function extractPages(buffer: Buffer): Promise<{ pages: RawPage[]; numPage
       items.push({ x: item.transform[4], y: item.transform[5], str, width: item.width ?? 0 })
     }
 
-    pages.push({ items, pageW, pageH })
+    const images = await extractImages(page, pdfjsLib)
+    pages.push({ items, images, pageW, pageH })
   }
 
   return { pages, numPages }
+}
+
+// ── Image extraction ───────────────────────────────────────────────────────────
+/**
+ * Walk the page's operator list, find image-paint operators, resolve each image
+ * object and convert its raw pixel data to a PNG data URL. The current
+ * transformation matrix tells us where (vertically) the image sits, so we can
+ * interleave it with the text in the right order.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function extractImages(page: any, pdfjsLib: any): Promise<ImageItem[]> {
+  const OPS = pdfjsLib.OPS
+  const out: ImageItem[] = []
+
+  let opList
+  try {
+    opList = await page.getOperatorList()
+  } catch {
+    return out
+  }
+
+  // Track the current transformation matrix through save/restore/transform.
+  let ctm: number[] = [1, 0, 0, 1, 0, 0]
+  const stack: number[][] = []
+  const mul = (a: number[], b: number[]): number[] => [
+    a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+    a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5],
+  ]
+
+  const resolveImage = (name: string) => {
+    // Page-level XObjects live in page.objs; inline/shared in commonObjs.
+    try { if (page.objs.has(name)) return page.objs.get(name) } catch { /* */ }
+    try { if (page.commonObjs.has(name)) return page.commonObjs.get(name) } catch { /* */ }
+    return null
+  }
+
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i]
+    const args = opList.argsArray[i]
+
+    if (fn === OPS.save) { stack.push(ctm.slice()); continue }
+    if (fn === OPS.restore) { ctm = stack.pop() ?? [1, 0, 0, 1, 0, 0]; continue }
+    if (fn === OPS.transform) { ctm = mul(ctm, args as number[]); continue }
+
+    if (fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject) {
+      const name = args[0] as string
+      const img = resolveImage(name)
+      if (!img || !img.width || !img.height) continue
+      const png = imgObjToPng(img)
+      if (!png) continue
+      // ctm[5] is the y-translation in PDF space (origin bottom-left); convert
+      // to a top-origin sort key so it interleaves with text item Y values.
+      out.push({ y: ctm[5], dataUrl: png, w: img.width, h: img.height })
+    }
+  }
+
+  return out
+}
+
+/** Convert a pdf.js image object into a PNG data URL, or null if unsupported. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function imgObjToPng(img: any): string | null {
+  try {
+    const { width, height, data, kind } = img
+    if (!data) return null
+    const total = width * height
+    const rgba = new Uint8Array(total * 4)
+
+    // pdf.js ImageKind: 1 = GRAYSCALE_1BPP, 2 = RGB_24BPP, 3 = RGBA_32BPP
+    if (kind === 3 || data.length >= total * 4) {
+      rgba.set(data.subarray(0, total * 4))
+    } else if (kind === 2 || data.length >= total * 3) {
+      for (let i = 0; i < total; i++) {
+        rgba[i * 4] = data[i * 3]
+        rgba[i * 4 + 1] = data[i * 3 + 1]
+        rgba[i * 4 + 2] = data[i * 3 + 2]
+        rgba[i * 4 + 3] = 255
+      }
+    } else if (data.length >= total) {
+      // Grayscale 1 byte/pixel
+      for (let i = 0; i < total; i++) {
+        const v = data[i]
+        rgba[i * 4] = v; rgba[i * 4 + 1] = v; rgba[i * 4 + 2] = v; rgba[i * 4 + 3] = 255
+      }
+    } else {
+      return null
+    }
+
+    return `data:image/png;base64,${encodePng(rgba, width, height).toString('base64')}`
+  } catch {
+    return null
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -207,9 +350,31 @@ function findRowAnchors(byCol: Map<number, TextItem[]>): number[] {
 
 // ── Page → HTML ───────────────────────────────────────────────────────────────
 
-function pageToHtml(items: TextItem[], pageW: number): string {
-  if (!items.length) return ''
+function pageToHtml(items: TextItem[], images: ImageItem[], pageW: number): string {
+  if (!items.length && !images.length) return ''
 
+  // Build the text body first, then splice images in by vertical position.
+  const body = items.length ? textBodyToHtml(items, pageW) : ''
+  if (!images.length) return body
+
+  const imgTags = images.map(im => {
+    // Cap displayed width so huge images don't blow past the editor/page.
+    const maxW = Math.min(im.w, 760)
+    return `<p><img src="${im.dataUrl}" width="${maxW}" /></p>`
+  })
+
+  // If we have a positionable text layout, interleave images by Y; otherwise
+  // just put them on top (most logos/headers sit above the text anyway).
+  const topY = items.length ? Math.max(...items.map(i => i.y)) : 0
+  const above: string[] = []
+  const below: string[] = []
+  for (let i = 0; i < images.length; i++) {
+    (images[i].y >= topY ? above : below).push(imgTags[i])
+  }
+  return [...above, body, ...below].filter(Boolean).join('\n')
+}
+
+function textBodyToHtml(items: TextItem[], pageW: number): string {
   const cols = findColumns(items, pageW)
 
   if (cols.length >= 3) {
@@ -342,7 +507,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer())
     const { pages, numPages } = await extractPages(buffer)
 
-    if (!pages.some(p => p.items.length)) {
+    if (!pages.some(p => p.items.length || p.images.length)) {
       return NextResponse.json(
         { error: 'Este PDF não contém texto extraível (pode ser um PDF de imagem/escaneado).' },
         { status: 422 }
@@ -350,8 +515,8 @@ export async function POST(request: NextRequest) {
     }
 
     const htmlParts: string[] = []
-    for (const { items, pageW } of pages) {
-      const part = pageToHtml(items, pageW)
+    for (const { items, images, pageW } of pages) {
+      const part = pageToHtml(items, images, pageW)
       if (part) htmlParts.push(part)
     }
 

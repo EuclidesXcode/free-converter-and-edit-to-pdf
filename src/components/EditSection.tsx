@@ -5,10 +5,15 @@ import {
   TextField, Alert, CircularProgress, Chip, Divider,
 } from '@mui/material'
 import { useDropzone } from 'react-dropzone'
-import { useEditor, EditorContent } from '@tiptap/react'
+import { useEditor, EditorContent, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import TextAlign from '@tiptap/extension-text-align'
+import { Image } from '@tiptap/extension-image'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableCell } from '@tiptap/extension-table-cell'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import DownloadIcon from '@mui/icons-material/Download'
 import FormatBoldIcon from '@mui/icons-material/FormatBold'
@@ -56,7 +61,7 @@ function ToolbarBtn({
   )
 }
 
-function EditorToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
+function EditorToolbar({ editor }: { editor: Editor | null }) {
   if (!editor) return null
   const s = { fontSize: 17 }
   return (
@@ -113,7 +118,13 @@ export default function EditSection() {
       StarterKit,
       Underline,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      Image.configure({ inline: false, allowBase64: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
     ],
+    immediatelyRender: false,
     content: '',
     editorProps: { attributes: { class: 'tiptap-doc' } },
   })
@@ -136,6 +147,7 @@ export default function EditSection() {
       .tiptap-doc blockquote { border-left:4px solid #1565C0; padding-left:1em; margin:.8em 0; color:#444; font-style:italic; }
       .tiptap-doc pre { background:#F4F6FA; border-radius:6px; padding:.8em 1.2em; font-family:monospace; font-size:.9em; overflow-x:auto; }
       .tiptap-doc hr  { border:none; border-top:2px solid #E4EAF2; margin:1.2em 0; }
+      .tiptap-doc img { max-width:100%; height:auto; border-radius:4px; margin:.4em 0; }
       .tiptap-doc table { border-collapse:collapse; width:100%; margin:.8em 0; }
       .tiptap-doc td,.tiptap-doc th { border:1px solid #C5D5EA; padding:6px 10px; }
       .tiptap-doc th { background:#EBF2FF; font-weight:700; }
@@ -343,7 +355,7 @@ export default function EditSection() {
             }}
             onClick={() => editor?.commands.focus()}
           >
-            <EditorContent editor={editor} />
+            {editor && <EditorContent editor={editor} />}
           </Box>
         </Box>
       </Box>
