@@ -128,7 +128,19 @@ async function extractPages(buffer: Buffer): Promise<{ pages: RawPage[]; numPage
   installDOMMatrixPolyfill()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js') as any
-  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+
+  // In a serverless function pdf.js falls back to a "fake worker", which does
+  // `require('./pdf.worker.js')`. Point workerSrc at the real, resolvable path
+  // so that require succeeds (the file is force-included via next.config).
+  try {
+    const { createRequire } = await import('module')
+    const require_ = createRequire(import.meta.url)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = require_.resolve(
+      'pdfjs-dist/legacy/build/pdf.worker.js'
+    )
+  } catch {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+  }
 
   const pdfDoc = await pdfjsLib.getDocument({
     data: new Uint8Array(buffer),
