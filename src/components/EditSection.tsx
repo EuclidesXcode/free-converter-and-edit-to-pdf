@@ -29,6 +29,18 @@ function loadPdfjs(): Promise<any> {
 
 interface RenderedPage { width: number; height: number; dataUrl: string }
 
+// A run of text from the original PDF, with geometry as fractions of the page
+// so it survives responsive scaling. Used to let the user click a word and
+// edit it in place (matched position, size and detected color).
+interface TextSpan {
+  xFraction: number      // left edge
+  yFraction: number      // top edge
+  wFraction: number      // width of the run
+  hFraction: number      // line/glyph height
+  fontSizePt: number     // size in PDF points
+  text: string
+}
+
 const COLORS = ['#000000', '#D32F2F', '#1565C0', '#2E7D32', '#E65100', '#FFFFFF']
 
 export default function EditSection() {
@@ -46,6 +58,8 @@ export default function EditSection() {
   // displayScale[i] = displayedPageWidthPx / pdfPageWidthPt — converts PDF
   // point sizes to on-screen pixels so text previews at its true final size.
   const [displayScale, setDisplayScale] = useState<number[]>([])
+  // Original text runs per page, for click-to-edit-in-place.
+  const spansRef = useRef<TextSpan[][]>([])
 
   // ── Render the uploaded PDF to images ──────────────────────────────────────
   const renderPdf = useCallback(async (file: File) => {
@@ -57,6 +71,7 @@ export default function EditSection() {
       const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise
 
       const pages: RenderedPage[] = []
+      const allSpans: TextSpan[][] = []
       const scale = 1.5 // render at 1.5x for crisp display
       for (let p = 1; p <= doc.numPages; p++) {
         const page = await doc.getPage(p)
@@ -66,12 +81,41 @@ export default function EditSection() {
         canvas.height = Math.ceil(viewport.height)
         const ctx = canvas.getContext('2d')!
         await page.render({ canvasContext: ctx, viewport }).promise
+
+        const pageW = viewport.width / scale
+        const pageH = viewport.height / scale
         pages.push({
-          width: viewport.width / scale,   // CSS points (1x) for the layer math
-          height: viewport.height / scale,
+          width: pageW,   // CSS points (1x) for the layer math
+          height: pageH,
           dataUrl: canvas.toDataURL('image/png'),
         })
+
+        // Capture text runs for click-to-edit. transform = [a,b,c,d,e,f]:
+        // (e,f) is the baseline origin (bottom-left), d≈font size in points.
+        const content = await page.getTextContent()
+        const spans: TextSpan[] = []
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const raw of content.items as any[]) {
+          const str: string = raw.str ?? ''
+          if (!str.trim()) continue
+          const tr = raw.transform as number[]
+          const fontSizePt = Math.hypot(tr[2], tr[3]) || Math.abs(tr[3]) || 10
+          const runW = raw.width ?? fontSizePt * str.length * 0.5
+          const baselineX = tr[4]
+          const baselineY = tr[5]
+          const topY = baselineY + fontSizePt * 0.8 // approx ascent above baseline
+          spans.push({
+            xFraction: baselineX / pageW,
+            yFraction: (pageH - topY) / pageH,
+            wFraction: runW / pageW,
+            hFraction: (fontSizePt * 1.2) / pageH,
+            fontSizePt,
+            text: str,
+          })
+        }
+        allSpans.push(spans)
       }
+      spansRef.current = allSpans
       setRenderedPages(pages)
       setDocTitle(file.name.replace(/\.pdf$/i, ''))
       setPdfFile(file)
@@ -97,6 +141,23 @@ export default function EditSection() {
   })
 
   // ── Annotation handling ─────────────────────────────────────────────────────
+  // Find the original text run under a click (fractional coords on the page).
+  const spanAt = (pageIndex: number, xf: number, yf: number): TextSpan | null => {
+    const spans = spansRef.current[pageIndex] ?? []
+    let best: TextSpan | null = null
+    for (const s of spans) {
+      const padY = s.hFraction * 0.35 // generous vertical hit area
+      if (
+        xf >= s.xFraction && xf <= s.xFraction + s.wFraction &&
+        yf >= s.yFraction - padY && yf <= s.yFraction + s.hFraction + padY
+      ) {
+        // Prefer the narrowest matching run (most specific word).
+        if (!best || s.wFraction < best.wFraction) best = s
+      }
+    }
+    return best
+  }
+
   const addAnnotationAt = (pageIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
     // Ignore clicks that land on an existing annotation box.
     if ((e.target as HTMLElement).closest('[data-annotation]')) return
@@ -104,10 +165,25 @@ export default function EditSection() {
     const xFraction = (e.clientX - rect.left) / rect.width
     const yFraction = (e.clientY - rect.top) / rect.height
     const id = crypto.randomUUID()
-    setAnnotations((prev) => [
-      ...prev,
-      { id, pageIndex, xFraction, yFraction, text: '', fontSize: 14, color: '#000000', cover: false },
-    ])
+
+    // If the click landed on existing text, edit it in place: same position,
+    // detected size, cover the original, and pre-fill with its text.
+    const hit = spanAt(pageIndex, xFraction, yFraction)
+    if (hit) {
+      setAnnotations((prev) => [...prev, {
+        id, pageIndex,
+        xFraction: hit.xFraction,
+        yFraction: hit.yFraction,
+        text: hit.text,
+        fontSize: Math.round(hit.fontSizePt),
+        color: '#000000',
+        cover: true,
+      }])
+    } else {
+      setAnnotations((prev) => [...prev, {
+        id, pageIndex, xFraction, yFraction, text: '', fontSize: 14, color: '#000000', cover: false,
+      }])
+    }
     setActiveId(id)
   }
 
@@ -256,7 +332,7 @@ export default function EditSection() {
         <Box flex={1} />
         <Button
           variant="outlined" size="small" startIcon={<UploadFileIcon />}
-          onClick={() => { setStep('upload'); setRenderedPages([]); setAnnotations([]); setPdfFile(null) }}
+          onClick={() => { setStep('upload'); setRenderedPages([]); setAnnotations([]); setPdfFile(null); spansRef.current = [] }}
         >
           Trocar PDF
         </Button>
@@ -278,7 +354,7 @@ export default function EditSection() {
         <Box sx={{ flex: 1, bgcolor: '#E8ECF2', borderRadius: 3, p: { xs: 1.5, md: 3 }, minWidth: 0 }}>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5, textAlign: 'center' }}>
             <TextFieldsIcon sx={{ fontSize: 14, verticalAlign: 'middle', mr: 0.5 }} />
-            Clique em qualquer lugar da página para adicionar texto
+            Clique sobre um texto para editá-lo, ou num espaço vazio para adicionar
           </Typography>
           <Stack spacing={3} alignItems="center">
             {renderedPages.map((pg, i) => {

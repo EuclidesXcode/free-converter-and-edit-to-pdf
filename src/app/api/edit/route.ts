@@ -42,11 +42,12 @@ export async function POST(request: NextRequest) {
       const fontSize = Math.max(6, Math.min(ann.fontSize ?? 14, 144))
 
       // The front-end reports the TOP-LEFT of the text box as a fraction of the
-      // rendered page. PDF space has a bottom-left origin and drawText anchors
-      // at the text baseline, so drop ~one ascent below the box top.
+      // rendered page (top = baseline + ~0.8·ascent, matching the capture in
+      // EditSection). PDF space has a bottom-left origin and drawText anchors at
+      // the baseline, so drop one ascent (0.8·fontSize) below the box top.
       const x = ann.xFraction * width
       const topY = height - ann.yFraction * height
-      const baselineY = topY - fontSize
+      const baselineY = topY - fontSize * 0.8
 
       const { r, g, b } = hexToRgb(ann.color ?? '#000000')
 
